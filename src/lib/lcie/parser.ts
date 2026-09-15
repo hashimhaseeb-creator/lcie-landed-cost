@@ -105,16 +105,73 @@ function parseCsv(text: string): LineItemInput[] {
   return items;
 }
 
-function parsePlainText(text: string): LineItemInput[] {
-  const lines = text
+/**
+ * Parse free-text / pasted PO lines. Returns both the line items AND any
+ * PO-level metadata (poNumber, supplier, origin, freight, …) recovered
+ * from header lines, so metadata lines do not become spurious line items.
+ *
+ * A line is accepted as a line item only if it carries a unit price
+ * ($X / USD X / etc.) OR matches the "N. description qty unit @ price"
+ * pattern. Header / metadata lines are scanned for known prefixes and
+ * consumed rather than turned into items.
+ */
+function parsePlainText(text: string): { items: LineItemInput[]; meta: Partial<PoInput> } {
+  const rawLines = text
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
+
+  const meta: Partial<PoInput> = {};
+  const itemLines: string[] = [];
+
+  const num = (s: string | undefined) => (s ? parseFloat(s.replace(/,/g, '')) || 0 : 0);
+  const setMetaFromLine = (line: string): boolean => {
+    // returns true if the line was consumed as metadata
+    const poNum = line.match(/(?:purchase\s+order|po\s*(?:no\.?|number)?|p\.o\.?)\s*[:#]?\s*([A-Z0-9][A-Z0-9\-_]{3,})/i);
+    if (poNum && !meta.poNumber) { meta.poNumber = poNum[1]; return true; }
+    const supplier = line.match(/^supplier\s*[:\-]\s*(.+)$/i);
+    if (supplier) { meta.supplier = supplier[1].trim(); return true; }
+    const inc = line.match(/incoterm\s*[:\-]\s*([A-Z]{2,3})\b/i);
+    if (inc) { meta.incoterm = inc[1].toUpperCase(); }
+    const cur = line.match(/currenc(?:y|ies)\s*[:\-]\s*([A-Z]{3})\b/i);
+    if (cur) { meta.currency = cur[1].toUpperCase(); }
+    const orig = line.match(/origin(?:\s*country)?\s*[:\-]\s*([A-Z]{2})\b/i);
+    if (orig) { meta.originCountry = orig[1].toUpperCase(); }
+    const dest = line.match(/dest(?:ination)?(?:\s*country)?\s*[:\-]\s*([A-Z]{2})\b/i);
+    if (dest) { meta.destinationCountry = dest[1].toUpperCase(); }
+    // freight / insurance / other — allow several on one line
+    let consumedFreight = false;
+    const fr = line.match(/freight\s*[:\-]\s*\$?([\d.,]+)/i);
+    if (fr) { meta.freight = (meta.freight ?? 0) + num(fr[1]); consumedFreight = true; }
+    const ins = line.match(/insurance\s*[:\-]\s*\$?([\d.,]+)/i);
+    if (ins) { meta.insurance = (meta.insurance ?? 0) + num(ins[1]); consumedFreight = true; }
+    const oth = line.match(/(?:other|handling|misc)\s*(?:charges?|fees?)?\s*[:\-]\s*\$?([\d.,]+)/i);
+    if (oth) { meta.otherCharges = (meta.otherCharges ?? 0) + num(oth[1]); consumedFreight = true; }
+    // a pure header line (supplier, origin-only, freight-only) is fully consumed
+    if (consumedFreight) return true;
+    return inc || cur || orig || dest ? true : false;
+  };
+
+  for (const raw of rawLines) {
+    // Detect line-item pattern: leading "N." or "N)" or "N-" numbering + a price somewhere
+    const hasLineNumber = /^\d+\s*[\.\)\-]\s+/.test(raw);
+    const priceMatch = raw.match(/(?:\$|usd|eur|gbp|pkr|inr)\s*(\d+(?:[.,]\d+)?)|(\d+(?:[.,]\d+)?)\s*(?:usd|eur|gbp|pkr|inr)/i);
+    // If it's clearly an item line (numbered or priced), keep it as an item
+    if (hasLineNumber || priceMatch) {
+      itemLines.push(raw);
+      continue;
+    }
+    // otherwise try to consume as metadata
+    if (!setMetaFromLine(raw)) {
+      // not metadata and not an item — skip (don't turn prose into items)
+    }
+  }
+
   const items: LineItemInput[] = [];
   let autoLine = 1;
-  for (const raw of lines) {
-    const line = raw.replace(/^\d+[\.\)\-]\s*/, '');
-    const qtyMatch = line.match(/(\d+(?:[.,]\d+)?)\s*(pcs|pieces|pc|sets|set|kg|kgs|m|units|ctn|cartons?|pairs?|pr|dozen|dz)?\b/i);
+  for (const raw of itemLines) {
+    const line = raw.replace(/^\d+\s*[\.\)\-]\s*/, '');
+    const qtyMatch = line.match(/(\d+(?:[.,]\d+)?)\s*(pcs|pieces|pc|sets|set|kg|kgs|kgs?|m\b|units|ctn|cartons?|pairs?|pr|dozen|dz|l|ml|g)\b/i);
     const priceMatch = line.match(/(?:\$|usd|eur|gbp|pkr|inr)\s*(\d+(?:[.,]\d+)?)|(\d+(?:[.,]\d+)?)\s*(?:usd|eur|gbp|pkr|inr)/i);
     let description = line;
     let quantity = 1;
@@ -126,11 +183,12 @@ function parsePlainText(text: string): LineItemInput[] {
       const uom = qtyMatch[2]?.toLowerCase();
       if (uom) {
         const map: Record<string, string> = {
-          pcs: 'PCS', pc: 'PCS', pieces: 'PCS', piece: 'PCS',
+          pcs: 'PCS', pc: 'PCS', pieces: 'PCS', piece: 'PCS', units: 'PCS',
           sets: 'SET', set: 'SET',
-          kg: 'KG', kgs: 'KG',
-          m: 'M', units: 'PCS', ctn: 'CTN', carton: 'CTN', cartons: 'CTN',
+          kg: 'KG', kgs: 'KG', g: 'G',
+          m: 'M', ctn: 'CTN', carton: 'CTN', cartons: 'CTN',
           pair: 'PR', pairs: 'PR', dozen: 'DZ', dz: 'DZ',
+          l: 'L', ml: 'ML',
         };
         unit = map[uom] ?? uom.toUpperCase();
       }
@@ -143,8 +201,9 @@ function parsePlainText(text: string): LineItemInput[] {
     description = description
       .replace(qtyMatch?.[0] ?? '', ' ')
       .replace(priceMatch?.[0] ?? '', ' ')
+      .replace(/@/g, ' ')
+      .replace(/[@—–\-]+\s*$/g, '')
       .replace(/\s+/g, ' ')
-      .replace(/[@—–-]+\s*$/g, '')
       .trim();
 
     if (!description) continue;
@@ -156,7 +215,7 @@ function parsePlainText(text: string): LineItemInput[] {
       unitValue,
     });
   }
-  return items;
+  return { items, meta };
 }
 
 /**
@@ -197,7 +256,9 @@ export function parsePoPayload(
   }
 
   if (lineItems.length === 0) {
-    lineItems = parsePlainText(text);
+    const { items, meta: parsedMeta } = parsePlainText(text);
+    lineItems = items;
+    extractedMeta = { ...parsedMeta, ...extractedMeta };
   }
 
   if (lineItems.length === 0) {

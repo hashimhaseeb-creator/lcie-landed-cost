@@ -92,6 +92,8 @@ export interface LineBreakdown {
   hsCode: string;
   fobValue: number;
   duty: number;
+  section301: number;
+  ieepa: number;
   vat: number;
   mpf: number;
   hmf: number;
@@ -106,6 +108,8 @@ export interface RegionCalculation {
   currency: string;
   subtotal: number;
   dutyTotal: number;
+  section301Total: number;
+  ieepaTotal: number;
   vatTotal: number;
   mpfTotal: number;
   hmfTotal: number;

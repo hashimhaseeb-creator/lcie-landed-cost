@@ -47,6 +47,8 @@ export async function calculateLandedCost(poId: string): Promise<CalculateRespon
     // Allocate freight / insurance / other proportionally to FOB
     const lineBreakdown: LineBreakdown[] = [];
     let dutyTotal = 0;
+    let section301Total = 0;
+    let ieepaTotal = 0;
     let vatTotal = 0;
     let hmfTotal = 0;
     let otherLeviesTotal = 0;
@@ -79,14 +81,21 @@ export async function calculateLandedCost(poId: string): Promise<CalculateRespon
         vat = vatBase * vatRate;
       }
 
-      // Other levies from determination JSON (e.g. excise) — US MPF handled at PO level
+      // Section 301 + IEEPA (US only) — China-specific trade-remedy surcharges on FOB
+      let section301 = 0;
+      let ieepa = 0;
+      // Other levies from determination JSON (e.g. excise) — MPF/HMF/Section301/IEEPA handled separately
       let lineOtherLevies = 0;
       if (det?.additionalLevies) {
         try {
           const obj = JSON.parse(det.additionalLevies) as Record<string, number>;
           for (const [k, v] of Object.entries(obj)) {
-            if (k === 'MPF' || k === 'HMF') continue; // handled separately
+            if (k === 'MPF' || k === 'HMF' || k === 'Section301' || k === 'IEEPA') continue;
             if (typeof v === 'number') lineOtherLevies += cifValue * v;
+          }
+          if (region === 'US') {
+            section301 = fobValue * (typeof obj.Section301 === 'number' ? obj.Section301 : 0);
+            ieepa = fobValue * (typeof obj.IEEPA === 'number' ? obj.IEEPA : 0);
           }
         } catch {
           /* ignore */
@@ -94,6 +103,8 @@ export async function calculateLandedCost(poId: string): Promise<CalculateRespon
       }
 
       dutyTotal += duty;
+      section301Total += section301;
+      ieepaTotal += ieepa;
       vatTotal += vat;
       hmfTotal += hmf;
       otherLeviesTotal += lineOtherLevies;
@@ -105,6 +116,8 @@ export async function calculateLandedCost(poId: string): Promise<CalculateRespon
         hsCode: det?.hsCode ?? '—',
         fobValue,
         duty,
+        section301,
+        ieepa,
         vat,
         mpf: 0, // allocated after PO-level MPF computed
         hmf,
@@ -127,10 +140,10 @@ export async function calculateLandedCost(poId: string): Promise<CalculateRespon
 
     // finalize line landed cost
     for (const lb of lineBreakdown) {
-      lb.lineLandedCost = lb.fobValue + lb.duty + lb.vat + lb.mpf + lb.hmf + lb.otherLevies + freight * (subtotal > 0 ? lb.fobValue / subtotal : 0) + insurance * (subtotal > 0 ? lb.fobValue / subtotal : 0);
+      lb.lineLandedCost = lb.fobValue + lb.duty + lb.section301 + lb.ieepa + lb.vat + lb.mpf + lb.hmf + lb.otherLevies + freight * (subtotal > 0 ? lb.fobValue / subtotal : 0) + insurance * (subtotal > 0 ? lb.fobValue / subtotal : 0);
     }
 
-    const totalLandedCost = subtotal + dutyTotal + vatTotal + mpfTotal + hmfTotal + otherLeviesTotal + freight + insurance;
+    const totalLandedCost = subtotal + dutyTotal + section301Total + ieepaTotal + vatTotal + mpfTotal + hmfTotal + otherLeviesTotal + freight + insurance;
     const effectiveRate = subtotal > 0 ? totalLandedCost / subtotal - 1 : 0;
 
     calculations.push({
@@ -140,6 +153,8 @@ export async function calculateLandedCost(poId: string): Promise<CalculateRespon
       currency: po.currency,
       subtotal,
       dutyTotal,
+      section301Total,
+      ieepaTotal,
       vatTotal,
       mpfTotal,
       hmfTotal,
@@ -152,7 +167,7 @@ export async function calculateLandedCost(poId: string): Promise<CalculateRespon
       notes: rule.notes,
     });
 
-    // persist the calculation
+    // persist the calculation (Section 301 + IEEPA folded into otherLevies for the DB row; full per-line detail in breakdownJson)
     await db.landedCostCalculation.create({
       data: {
         poId,
@@ -162,7 +177,7 @@ export async function calculateLandedCost(poId: string): Promise<CalculateRespon
         vatTotal,
         mpfTotal,
         hmfTotal,
-        otherLevies: otherLeviesTotal,
+        otherLevies: otherLeviesTotal + section301Total + ieepaTotal,
         freight,
         insurance,
         totalLandedCost,

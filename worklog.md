@@ -101,3 +101,29 @@ Stage Summary:
 - Full LCIE Landed Cost Agent live at / — upload PO → AI determines HS codes for US HTS / UK Global Tariff / EU TARIC → calculates duty + VAT + MPF/HMF + freight + insurance per region → auditable reasoning + charts.
 - All currency consistent (PO currency), "lowest touch" now correctly compares effectiveRate (currency-agnostic).
 - Artifacts: prisma/schema.prisma, src/lib/lcie/{types,parser,agent,calculator,sample-po}.ts, src/lib/hs-knowledge-base.ts (from Task 1), src/app/api/lcie/{upload-po,determine-codes,calculate,sample-po}/route.ts, src/app/page.tsx, src/app/layout.tsx, src/components/lcie/duty-charts.tsx, src/components/theme-provider.tsx, src/app/globals.css.
+
+---
+Task ID: 6
+Agent: orchestrator (main)
+Task: Rebrand to the real Green G(P)⁴™ Global Operations identity + add PDF PO upload + add Section 301 / IEEPA surcharges (per user feedback: PDF not uploading, wrong theme, wrong logo, wrong color scheme).
+
+Work Log:
+- Fetched the reference site https://alpine-rcic.netlify.app/ via z-ai page_reader to recover the actual brand identity (the attached HTML never landed on the filesystem). Extracted: brand name, G(P)⁴ 4-quadrant ring logo SVG (favicon), theme-color #22D3EE (cyan), Inter/Sora/IBM Plex Mono fonts, "Plan·Procure·Produce·Provide" framework, nav (H₂ Protocol Tool / LCIE Cost Calculator / ICE Fleet Savings / About / ROI), footer © 2026 + disclaimers, and the HTS Classification Agent + Duty Stack Agent (Section 301 / IEEPA) concept.
+- Installed `unpdf` and rewrote /api/lcie/upload-po to detect PDF (magic bytes %PDF / .pdf ext / application/pdf) and text-extract via unpdf before parsing. Added .pdf to the dropzone accept attribute.
+- Rebuilt the G(P)⁴™ ring logo as a React component (src/components/gp4-logo.tsx) + public/logo.svg (4 arcs: cyan-blue #0369A1, teal #1B6C79, forest #2E6A45, olive #3F5C31; G(P)4™ text).
+- Rebranded globals.css to the brand palette: --primary #0891B2 (cyan-600), --ring #22D3EE (brand theme-color), cream --background #F6F8F5, emerald accent, violet/pink chart slots for Section 301 / IEEPA. Added gp4-pulse / gp4-flow-bar / gp4-hero-glow keyframes. Dark mode tokens too.
+- Updated layout.tsx: brand title "Green G(P)⁴™ Global Operations — LCIE Landed Cost Engine | Hydrogen Systems & Supply Chain Framework", Inter+Sora+IBM Plex Mono fonts, /logo.svg favicon, sonner Toaster.
+- Rebuilt page.tsx: G(P)⁴ logo header + 5-item nav (LCIE Cost Calculator active), brand-voice hero (FRAMEWORK = Plan·Procure·Produce·Provide; HTS Classification Agent + Duty Stack Agent badges), PDF dropzone, cyan/teal RegionCards with Section 301 + IEEPA rows for US, per-line US table with §301 + IEEPA columns, charts include Section 301 + IEEPA, © 2026 footer with financial disclaimer + Schedule an Enterprise Green Audit CTA.
+- Added Section 301 / IEEPA to the backend: types.ts (section301Total/ieepaTotal on RegionCalculation; section301/ieepa on LineBreakdown); agent.ts (system prompt asks LLM for Section301/IEEPA per CN-origin line; sanitizer keeps LLM values or defaults CN→0.25/0.34; fallback branch includes them); calculator.ts (section301 = FOB×rate, ieepa = FOB×rate, folded into totals + breakdownJson). Charts updated to render Section 301 (violet) + IEEPA (pink).
+- Hardened the PO parser (parser.ts parsePlainText): now extracts PO metadata (poNumber, supplier, origin, destination, incoterm, currency, freight, insurance, other) from header lines and only accepts lines with a price OR a "N." line-number prefix as items — so PDF/pasted POs no longer create spurious rows. Fixed a "at"-word regex that mangled "atomiser"→"omiser" (now only strips the @ separator).
+
+Verification (Agent Browser):
+- Brand: title="Green G(P)⁴™ Global Operations — LCIE Landed Cost Engine…", h1="LCIE Landed Cost Engine", nav=[H₂ Protocol Tool, LCIE Cost Calculator(active), ICE Fleet Savings, About, ROI], 2 G(P)4 logo SVGs render, --ring=#22d3ee, --primary=#0891b2. No errors.
+- PDF upload: hand-crafted a minimal valid PDF PO (Turkey-origin, 5 lines) → POST /api/lcie/upload-po 201 in 361ms → exactly 5 clean line items (coffee, chocolate, olive oil, "Eau de parfum floral atomiser", lavender soap) + freight $1,920 / insurance $280 / other $120 metadata extracted. Parser no longer turns header lines into items.
+- Section 301 / IEEPA: loaded the CN-origin "Mixed Retail Consignment" sample → ran agent (POST /api/lcie/determine-codes 200 in 29.8s; POST /api/lcie/calculate 200 in 145ms) → US region card shows Section 301 surcharge $13,550 (25% on apparel/handbag/jeans FOB; ITA-covered smartphones/cables/headphones correctly excluded) + IEEPA reciprocal tariff $18,428 (34% on the same non-ITA lines). Per-line US table headers include §301 + IEEPA columns. Charts include Section 301 (violet) + IEEPA (pink) segments. Badge: "Lowest effective rate: 🇺🇸 US (16.26%)" — US still lowest vs UK/EU (VAT-dominated).
+- Footer: © 2026 copyright + financial disclaimer (mentions Section 301 / IEEPA subject to executive action) + "Schedule an Enterprise Green Audit" button all present.
+- Lint: clean. No runtime errors in dev.log.
+
+Stage Summary:
+- All four user-reported issues resolved: (1) PDF PO upload now works end-to-end; (2) theme now matches the real alpine-rcic.netlify.app brand (cyan/teal/cream + G(P)⁴ ring logo + Inter/Sora fonts); (3) logo is the actual G(P)⁴ 4-quadrant ring; (4) color scheme is the brand's cyan #22D3EE primary + green lens accents, not the generic emerald.
+- Bonus: Section 301 + IEEPA surcharges (explicitly mentioned on the reference site's Duty Stack Agent) are now modelled and visible in the US region card, per-line table, and charts.

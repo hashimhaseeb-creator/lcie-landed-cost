@@ -59,9 +59,11 @@ Rules:
 - Always use realistic, correctly-digit-counted codes: US 8-10 digits, UK 10 digits, EU 8 digits (with spaces, e.g. "6109 10 00").
 - dutyRate is a DECIMAL ad valorem fraction (0.165 = 16.5%, 0 = free). dutyType ∈ {"ad valorem","specific","free"}.
 - vatRate is a DECIMAL (0.20 = 20%). For US, vatRate MUST be 0 (no federal VAT).
-- additionalLevies: object mapping levy name → decimal rate (e.g. {"MPF":0.003464,"HMF":0.00125} for US ocean shipments; {} or null for UK/EU).
+- additionalLevies: object mapping levy name → decimal rate. For US always include {"MPF":0.003464,"HMF":0.00125,"Section301":<rate>,"IEEPA":<rate>}. For UK/EU use null or {}.
+- Section 301 (US only): the China-specific trade-remedy surcharge. If originCountry is CN and the HTS subheading is on Section 301 List 3 (most consumer apparel, leather goods, tools, ceramics, food), set "Section301":0.25. If on List 4A/4B (smartphones, laptops, some electronics — largely exempt/suspended), set "Section301":0. If origin is not CN, set 0. State the list assumption in reasoning.
+- IEEPA reciprocal tariff (US only): the 2025 IEEPA reciprocal duty. If originCountry is CN set "IEEPA":0.34 (modelled); 0 otherwise. Note in reasoning that this is a modelled estimate subject to executive action.
 - confidence: 0..1 self-reported certainty (use ≥0.85 when grounded by KB, 0.6-0.84 for LLM-only inference).
-- reasoning: ONE concise sentence explaining the classification rationale (material + chapter + duty treatment).
+- reasoning: ONE concise sentence explaining the classification rationale (material + chapter + duty treatment + any Section 301/IEEPA note).
 - If a product is genuinely duty-free under the WTO Information Technology Agreement (smartphones, laptops, semiconductors), set dutyRate 0 and dutyType "free" with a note in reasoning.
 
 Return ONLY valid JSON (no markdown fences, no prose) in this exact shape:
@@ -69,7 +71,7 @@ Return ONLY valid JSON (no markdown fences, no prose) in this exact shape:
   "items": [
     {
       "lineItemId": "<id from input>",
-      "us": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0, "additionalLevies": {"MPF":0.003464,"HMF":0.00125}, "confidence": 0.9, "reasoning": "..." },
+      "us": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0, "additionalLevies": {"MPF":0.003464,"HMF":0.00125,"Section301":0.25,"IEEPA":0.34}, "confidence": 0.9, "reasoning": "..." },
       "uk": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0.2, "additionalLevies": null, "confidence": 0.9, "reasoning": "..." },
       "eu": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0.19, "additionalLevies": null, "confidence": 0.9, "reasoning": "..." }
     }
@@ -160,14 +162,32 @@ function safeParseBatch(raw: string): LlmBatchOutput | null {
   return null;
 }
 
-function sanitizeRegion(r: Partial<LlmRegionOutput> | undefined, region: Region, fallbackEntry?: { code: string; dutyRate: number; dutyType: string; vatRate: number; description: string }): LlmRegionOutput {
+function sanitizeRegion(
+  r: Partial<LlmRegionOutput> | undefined,
+  region: Region,
+  fallbackEntry?: { code: string; dutyRate: number; dutyType: string; vatRate: number; description: string },
+  originCountry?: string | null,
+): LlmRegionOutput {
   const fb = fallbackEntry ?? { code: '', dutyRate: 0, dutyType: 'ad valorem', vatRate: 0, description: '' };
   const dutyRate = typeof r?.dutyRate === 'number' && isFinite(r.dutyRate) ? Math.max(0, r.dutyRate) : fb.dutyRate;
   const vatRate = region === 'US' ? 0 : (typeof r?.vatRate === 'number' && isFinite(r.vatRate) ? r.vatRate : fb.vatRate);
-  const additionalLevies =
-    region === 'US'
-      ? { MPF: DUTY_RULES.US.mpfRate!, HMF: DUTY_RULES.US.hmfRate! }
-      : r?.additionalLevies && typeof r.additionalLevies === 'object' ? r.additionalLevies : null;
+
+  let additionalLevies: Record<string, number> | null;
+  if (region === 'US') {
+    const ll = (r?.additionalLevies && typeof r.additionalLevies === 'object' ? r.additionalLevies : {}) as Record<string, number>;
+    const isCn = (originCountry ?? 'CN').toUpperCase() === 'CN';
+    const section301 = typeof ll.Section301 === 'number' && isFinite(ll.Section301) ? ll.Section301 : (isCn ? 0.25 : 0);
+    const ieepa = typeof ll.IEEPA === 'number' && isFinite(ll.IEEPA) ? ll.IEEPA : (isCn ? 0.34 : 0);
+    additionalLevies = {
+      MPF: DUTY_RULES.US.mpfRate!,
+      HMF: DUTY_RULES.US.hmfRate!,
+      Section301: section301,
+      IEEPA: ieepa,
+    };
+  } else {
+    additionalLevies = r?.additionalLevies && typeof r.additionalLevies === 'object' ? r.additionalLevies : null;
+  }
+
   return {
     hsCode: typeof r?.hsCode === 'string' && r.hsCode.trim() ? r.hsCode.trim() : fb.code,
     tariffDescription: typeof r?.tariffDescription === 'string' && r.tariffDescription.trim() ? r.tariffDescription.trim() : fb.description,
@@ -264,7 +284,14 @@ export async function determineHsCodesForPo(poId: string): Promise<DetermineResp
               dutyRate: regional?.dutyRate ?? 0,
               dutyType: regional?.dutyType ?? 'ad valorem',
               vatRate: region === 'US' ? 0 : (region === 'UK' ? 0.2 : 0.19),
-              additionalLevies: region === 'US' ? JSON.stringify({ MPF: DUTY_RULES.US.mpfRate, HMF: DUTY_RULES.US.hmfRate }) : null,
+              additionalLevies: region === 'US'
+                ? JSON.stringify({
+                    MPF: DUTY_RULES.US.mpfRate,
+                    HMF: DUTY_RULES.US.hmfRate,
+                    Section301: ((li.originCountry ?? po.originCountry ?? 'CN').toUpperCase() === 'CN' ? 0.25 : 0),
+                    IEEPA: ((li.originCountry ?? po.originCountry ?? 'CN').toUpperCase() === 'CN' ? 0.34 : 0),
+                  })
+                : null,
               confidence: fb ? 0.6 : 0.3,
               reasoning: fb ? `Fallback to KB entry "${fb.id}" (LLM parse failed).` : 'No grounding; LLM unavailable.',
               groundingRefs: cands.map((c) => c.id).join(',') || null,
@@ -294,7 +321,7 @@ export async function determineHsCodesForPo(poId: string): Promise<DetermineResp
               ? { code: fb.uk.code, dutyRate: fb.uk.dutyRate, dutyType: fb.uk.dutyType, vatRate: fb.uk.vatRate, description: fb.uk.description }
               : { code: fb.eu.code, dutyRate: fb.eu.dutyRate, dutyType: fb.eu.dutyType, vatRate: fb.eu.vatRate, description: fb.eu.description }
           : undefined;
-        const sanitized = sanitizeRegion(raw, region, fbRegional);
+        const sanitized = sanitizeRegion(raw, region, fbRegional, li.originCountry ?? po.originCountry);
         const det = await db.hsDetermination.create({
           data: {
             lineItemId: li.id,

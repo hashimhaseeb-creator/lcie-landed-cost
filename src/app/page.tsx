@@ -3,7 +3,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Leaf,
   Upload,
   FileText,
   Sparkles,
@@ -24,6 +23,9 @@ import {
   Download,
   RefreshCw,
   Boxes,
+  Search,
+  Layers,
+  Leaf,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
@@ -36,9 +38,15 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Gp4Logo } from '@/components/gp4-logo';
 import { DutyCharts } from '@/components/lcie/duty-charts';
 import type { PoDto, DetermineResponse, CalculateResponse, Region, RegionCalculation, DeterminationResult, AgentStep } from '@/lib/lcie/types';
 import { toast } from 'sonner';
+
+/* Brand: Green G(P)⁴™ Global Operations — the four-arc ring = Plan · Procure · Produce · Provide */
+const BRAND = 'Green G(P)\u2074\u2122';
+const BRAND_FULL = 'Green G(P)\u2074\u2122 Global Operations';
+const FRAMEWORK = 'Plan \u00b7 Procure \u00b7 Produce \u00b7 Provide';
 
 const CUR: Record<string, string> = { USD: '$', GBP: '£', EUR: '€', PKR: '₨', INR: '₹' };
 const sym = (c: string) => CUR[c] ?? '';
@@ -46,6 +54,14 @@ const fmtMoney = (n: number, c: string) => `${sym(c)}${n.toLocaleString(undefine
 const fmtPct = (n: number) => `${(n * 100).toFixed(n < 0.1 ? 3 : 2)}%`;
 
 interface SampleSummary { id: string; title: string; blurb: string; lineCount: number }
+
+const NAV = [
+  { label: 'H₂ Protocol Tool' },
+  { label: 'LCIE Cost Calculator', active: true },
+  { label: 'ICE Fleet Savings' },
+  { label: 'About' },
+  { label: 'ROI' },
+];
 
 export default function Home() {
   const [po, setPo] = useState<PoDto | null>(null);
@@ -72,7 +88,6 @@ export default function Home() {
       .catch(() => void 0);
   }, []);
 
-  // reveal agent steps progressively for a "live" feel
   useEffect(() => {
     if (!agentResult) return;
     setVisibleSteps([]);
@@ -121,9 +136,30 @@ export default function Home() {
   }, []);
 
   const handleFile = useCallback(async (file: File) => {
-    const text = await file.text();
-    await uploadPayload(text, file.name);
-  }, [uploadPayload]);
+    setUploading(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/lcie/upload-po', { method: 'POST', body: fd });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.detail ?? e.error ?? 'Upload failed');
+      }
+      const dto: PoDto = await res.json();
+      setPo(dto);
+      setAgentResult(null);
+      setCalcResult(null);
+      setVisibleSteps([]);
+      toast.success(`PO ${dto.poNumber} parsed — ${dto.lineItems.length} line item(s)`);
+      setTimeout(() => workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Upload failed');
+      toast.error('PO upload failed');
+    } finally {
+      setUploading(false);
+    }
+  }, []);
 
   const handleLoadSample = useCallback(async (id: string) => {
     setUploading(true);
@@ -215,23 +251,33 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-b from-emerald-50/60 via-background to-background dark:from-emerald-950/30 dark:via-background dark:to-background">
-      {/* Header (sticky) */}
-      <header className="sticky top-0 z-50 w-full border-b border-emerald-200/60 dark:border-emerald-900/40 bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
-        <div className="container mx-auto px-4 h-16 flex items-center justify-between gap-3">
+    <div className="min-h-screen flex flex-col bg-background gp4-hero-glow">
+      {/* ===== Header (sticky) ===== */}
+      <header className="sticky top-0 z-50 w-full border-b border-cyan-200/50 dark:border-cyan-900/40 bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+        <div className="container mx-auto px-4 h-16 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="relative h-9 w-9 rounded-xl bg-primary/15 border border-primary/30 grid place-items-center text-primary">
-              <Leaf className="h-5 w-5" />
-              <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-primary lcie-pulse" />
+            <div className="relative shrink-0">
+              <Gp4Logo size={38} />
+              <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-cyan-400 gp4-pulse" />
             </div>
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-400 font-semibold leading-none">Green G(P)4 Supply Chain Framework</p>
-              <h1 className="text-sm md:text-base font-semibold leading-tight truncate">LCIE Landed Cost Agent</h1>
+            <div className="min-w-0 leading-tight">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-300 font-semibold">{BRAND} <span className="text-muted-foreground font-normal">Global Operations</span></p>
+              <h1 className="text-sm md:text-base font-bold font-display truncate">LCIE Landed Cost Engine</h1>
             </div>
           </div>
+          <nav className="hidden lg:flex items-center gap-1">
+            {NAV.map((n) => (
+              <span
+                key={n.label}
+                className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${n.active ? 'bg-cyan-600 text-white' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+              >
+                {n.label}
+              </span>
+            ))}
+          </nav>
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className="hidden sm:inline-flex border-emerald-300/60 text-emerald-700 dark:text-emerald-400 dark:border-emerald-800/60 gap-1">
-              <Cpu className="h-3 w-3" /> AI Agent online
+            <Badge variant="outline" className="hidden sm:inline-flex border-cyan-300/60 text-cyan-700 dark:text-cyan-300 dark:border-cyan-800/60 gap-1">
+              <Cpu className="h-3 w-3" /> Agent online
             </Badge>
             <Button variant="outline" size="icon" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle theme">
               {mounted && theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -241,45 +287,47 @@ export default function Home() {
       </header>
 
       <main className="flex-1">
-        {/* Hero */}
+        {/* ===== Hero ===== */}
         <section className="container mx-auto px-4 pt-10 pb-6">
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} className="max-w-3xl">
-            <Badge variant="secondary" className="mb-3 border-emerald-200/60 dark:border-emerald-900/40 text-emerald-700 dark:text-emerald-400">
-              <Sparkles className="h-3 w-3 mr-1" /> AI-assisted harmonized code determination
+            <Badge variant="secondary" className="mb-3 border-cyan-200/60 dark:border-cyan-900/40 text-cyan-700 dark:text-cyan-300">
+              <Sparkles className="h-3 w-3 mr-1" /> {FRAMEWORK} — a decision sequence, not a product category
             </Badge>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight leading-tight">
-              Landed Cost Intelligence Engine
-              <span className="block text-emerald-600 dark:text-emerald-400">for US · UK · EU duty stacks</span>
+            <h2 className="text-3xl md:text-4xl font-bold tracking-tight leading-tight font-display">
+              LCIE Landed Cost Engine
+              <span className="block text-cyan-600 dark:text-cyan-400">forensic duty &amp; tax across US · UK · EU</span>
             </h2>
             <p className="mt-3 text-muted-foreground text-base md:text-lg max-w-2xl">
               Upload a Purchase Order and the LCIE agent auto-determines HS codes for the{' '}
               <strong className="text-foreground">US HTS</strong>,{' '}
               <strong className="text-foreground">UK Global Tariff</strong> and{' '}
-              <strong className="text-foreground">EU TARIC</strong> schedules, then calculates duty, VAT and other leviable charges — live, with reasoning you can audit.
+              <strong className="text-foreground">EU TARIC</strong> schedules — then calculates MFN base duty,{' '}
+              <strong className="text-foreground">Section 301</strong> &amp; <strong className="text-foreground">IEEPA</strong> surcharges, MPF, HMF and VAT. Live, with reasoning you can audit.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               {[
-                { icon: Brain, label: 'AI HS classification' },
+                { icon: Search, label: 'HTS Classification Agent' },
+                { icon: Layers, label: 'Duty Stack Agent (301 / IEEPA)' },
                 { icon: Globe2, label: '3 regions in one pass' },
                 { icon: ShieldCheck, label: 'Auditable reasoning' },
                 { icon: Calculator, label: 'Full landed cost' },
               ].map((f) => (
-                <Badge key={f.label} variant="outline" className="gap-1.5 py-1.5 px-3 rounded-full border-emerald-200/60 dark:border-emerald-900/40">
-                  <f.icon className="h-3.5 w-3.5 text-primary" /> {f.label}
+                <Badge key={f.label} variant="outline" className="gap-1.5 py-1.5 px-3 rounded-full border-cyan-200/60 dark:border-cyan-900/40">
+                  <f.icon className="h-3.5 w-3.5 text-cyan-600 dark:text-cyan-400" /> {f.label}
                 </Badge>
               ))}
             </div>
           </motion.div>
         </section>
 
-        {/* Workspace */}
+        {/* ===== Workspace ===== */}
         <section ref={workspaceRef} className="container mx-auto px-4 pb-12 space-y-6">
           {/* Upload card */}
           {!po && (
-            <Card className="border-emerald-200/60 dark:border-emerald-900/40 overflow-hidden">
-              <CardHeader className="bg-emerald-50/60 dark:bg-emerald-950/20 border-b border-emerald-100 dark:border-emerald-900/30">
-                <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5 text-primary" /> Upload a Purchase Order</CardTitle>
-                <CardDescription>Drop a CSV / JSON / text PO, paste PO lines, or load a sample consignment to begin.</CardDescription>
+            <Card className="border-cyan-200/60 dark:border-cyan-900/40 overflow-hidden">
+              <CardHeader className="bg-cyan-50/60 dark:bg-cyan-950/20 border-b border-cyan-100 dark:border-cyan-900/30">
+                <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5 text-cyan-600 dark:text-cyan-400" /> Upload a Purchase Order</CardTitle>
+                <CardDescription>Drop a <strong>PDF</strong>, CSV, JSON or text PO, paste PO lines, or load a sample consignment to begin.</CardDescription>
               </CardHeader>
               <CardContent className="p-6">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -294,19 +342,19 @@ export default function Home() {
                         if (f) handleFile(f);
                       }}
                       onClick={() => fileInputRef.current?.click()}
-                      className={`cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors ${dragOver ? 'border-primary bg-primary/5' : 'border-emerald-200 dark:border-emerald-900/50 hover:border-primary/60 hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20'}`}
+                      className={`cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors ${dragOver ? 'border-cyan-500 bg-cyan-50/60' : 'border-cyan-200 dark:border-cyan-900/50 hover:border-cyan-500/60 hover:bg-cyan-50/40 dark:hover:bg-cyan-950/20'}`}
                     >
-                      <input ref={fileInputRef} type="file" accept=".csv,.json,.txt,.xml" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
-                      <div className="mx-auto h-12 w-12 rounded-full bg-primary/10 grid place-items-center mb-3">
-                        {uploading ? <Loader2 className="h-6 w-6 text-primary animate-spin" /> : <FileText className="h-6 w-6 text-primary" />}
+                      <input ref={fileInputRef} type="file" accept=".csv,.json,.txt,.xml,.pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+                      <div className="mx-auto h-12 w-12 rounded-full bg-cyan-600/10 grid place-items-center mb-3">
+                        {uploading ? <Loader2 className="h-6 w-6 text-cyan-600 animate-spin" /> : <FileText className="h-6 w-6 text-cyan-600 dark:text-cyan-400" />}
                       </div>
                       <p className="font-medium">{uploading ? 'Parsing PO…' : 'Drop PO file here or click to browse'}</p>
-                      <p className="text-xs text-muted-foreground mt-1">CSV, JSON, or plain text · auto-detects columns</p>
+                      <p className="text-xs text-muted-foreground mt-1"><span className="text-cyan-700 dark:text-cyan-300 font-medium">PDF</span> · CSV · JSON · text — auto-detects format &amp; columns</p>
                     </div>
                   </div>
                   {/* Paste */}
                   <div className="flex flex-col">
-                    <label className="text-sm font-medium mb-1.5 flex items-center gap-1.5"><Boxes className="h-4 w-4 text-primary" /> Paste PO line items</label>
+                    <label className="text-sm font-medium mb-1.5 flex items-center gap-1.5"><Boxes className="h-4 w-4 text-cyan-600 dark:text-cyan-400" /> Paste PO line items</label>
                     <Textarea
                       value={pasteText}
                       onChange={(e) => setPasteText(e.target.value)}
@@ -321,22 +369,21 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Samples */}
                 {samples.length > 0 && (
                   <div className="mt-6">
                     <Separator className="mb-4" />
-                    <p className="text-sm font-medium mb-2 flex items-center gap-1.5"><Boxes className="h-4 w-4 text-primary" /> Or load a sample consignment</p>
+                    <p className="text-sm font-medium mb-2 flex items-center gap-1.5"><Boxes className="h-4 w-4 text-cyan-600 dark:text-cyan-400" /> Or load a sample consignment</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       {samples.map((s) => (
                         <button
                           key={s.id}
                           onClick={() => handleLoadSample(s.id)}
                           disabled={uploading}
-                          className="text-left rounded-lg border border-emerald-200/70 dark:border-emerald-900/40 bg-card hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 hover:border-primary/50 p-3 transition-colors disabled:opacity-60"
+                          className="text-left rounded-lg border border-cyan-200/70 dark:border-cyan-900/40 bg-card hover:bg-cyan-50/50 dark:hover:bg-cyan-950/20 hover:border-cyan-500/50 p-3 transition-colors disabled:opacity-60"
                         >
                           <p className="text-sm font-medium leading-tight">{s.title}</p>
                           <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{s.blurb}</p>
-                          <p className="text-[11px] text-primary mt-2 flex items-center gap-1">{s.lineCount} line items <ChevronRight className="h-3 w-3" /></p>
+                          <p className="text-[11px] text-cyan-700 dark:text-cyan-300 mt-2 flex items-center gap-1">{s.lineCount} line items <ChevronRight className="h-3 w-3" /></p>
                         </button>
                       ))}
                     </div>
@@ -355,11 +402,11 @@ export default function Home() {
 
           {/* PO + line items */}
           {po && (
-            <Card className="border-emerald-200/60 dark:border-emerald-900/40">
+            <Card className="border-cyan-200/60 dark:border-cyan-900/40">
               <CardHeader className="pb-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5 text-primary" /> {po.poNumber}</CardTitle>
+                    <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5 text-cyan-600 dark:text-cyan-400" /> {po.poNumber}</CardTitle>
                     <CardDescription className="mt-1">
                       {po.supplier ? `${po.supplier} · ` : ''}{po.originCountry ?? '—'} → {po.destinationCountry ?? '—'} · {po.incoterm ?? 'FOB'} · {po.currency}
                     </CardDescription>
@@ -402,7 +449,7 @@ export default function Home() {
                     </Table>
                   </ScrollArea>
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-t bg-emerald-50/40 dark:bg-emerald-950/15">
+                <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-t bg-cyan-50/40 dark:bg-cyan-950/15">
                   <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
                     <span>Freight: <strong className="text-foreground font-mono">{fmtMoney(po.freight, po.currency)}</strong></span>
                     <span>Insurance: <strong className="text-foreground font-mono">{fmtMoney(po.insurance, po.currency)}</strong></span>
@@ -417,7 +464,7 @@ export default function Home() {
                         <TooltipContent>The goods value before freight, insurance, duty or tax.</TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
-                    <span className="font-mono font-semibold text-lg text-primary">{fmtMoney(po.lineItems.reduce((s, l) => s + l.totalValue, 0), po.currency)}</span>
+                    <span className="font-mono font-semibold text-lg text-cyan-700 dark:text-cyan-300">{fmtMoney(po.lineItems.reduce((s, l) => s + l.totalValue, 0), po.currency)}</span>
                   </div>
                 </div>
               </CardContent>
@@ -435,11 +482,11 @@ export default function Home() {
           <AnimatePresence>
             {(agentLoading || visibleSteps.length > 0) && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-                <Card className="border-emerald-200/60 dark:border-emerald-900/40">
+                <Card className="border-cyan-200/60 dark:border-cyan-900/40">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <CardTitle className="flex items-center gap-2"><Cpu className="h-5 w-5 text-primary" /> LCIE Agent — live trace</CardTitle>
+                        <CardTitle className="flex items-center gap-2"><Cpu className="h-5 w-5 text-cyan-600 dark:text-cyan-400" /> LCIE Agent — live trace</CardTitle>
                         <CardDescription>Grounding · LLM classification · parsing · storage — one row per step.</CardDescription>
                       </div>
                       {agentResult && <Badge variant="outline" className="gap-1"><Database className="h-3 w-3" /> {agentResult.model} · {(agentResult.durationMs / 1000).toFixed(1)}s</Badge>}
@@ -450,7 +497,7 @@ export default function Home() {
                       <ul className="divide-y">
                         {visibleSteps.map((s) => (
                           <li key={s.step} className="flex items-start gap-3 p-3 text-sm">
-                            <span className={`mt-0.5 h-5 w-5 rounded-full grid place-items-center shrink-0 ${s.status === 'error' ? 'bg-destructive/15 text-destructive' : s.status === 'stored' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : s.status === 'llm_call' ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'}`}>
+                            <span className={`mt-0.5 h-5 w-5 rounded-full grid place-items-center shrink-0 ${s.status === 'error' ? 'bg-destructive/15 text-destructive' : s.status === 'stored' ? 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400' : s.status === 'llm_call' ? 'bg-cyan-600/15 text-cyan-600 dark:text-cyan-400' : 'bg-muted text-muted-foreground'}`}>
                               {s.status === 'stored' ? <CheckCircle2 className="h-3 w-3" /> : s.status === 'error' ? <AlertTriangle className="h-3 w-3" /> : s.status === 'llm_call' ? <Brain className="h-3 w-3" /> : <ScanLine className="h-3 w-3" />}
                             </span>
                             <div className="min-w-0 flex-1">
@@ -462,12 +509,12 @@ export default function Home() {
                         ))}
                         {agentLoading && (
                           <li className="flex items-center gap-3 p-3 text-sm text-muted-foreground">
-                            <Loader2 className="h-4 w-4 animate-spin text-primary" /> awaiting next step…
+                            <Loader2 className="h-4 w-4 animate-spin text-cyan-600" /> awaiting next step…
                           </li>
                         )}
                       </ul>
                     </div>
-                    {agentLoading && <div className="h-1 w-full lcie-flow-bar" />}
+                    {agentLoading && <div className="h-1 w-full gp4-flow-bar" />}
                   </CardContent>
                 </Card>
               </motion.div>
@@ -488,17 +535,52 @@ export default function Home() {
         </section>
       </main>
 
-      {/* Footer (sticky to bottom) */}
-      <footer className="mt-auto border-t border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/50 dark:bg-emerald-950/20">
-        <div className="container mx-auto px-4 py-5 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <Leaf className="h-3.5 w-3.5 text-primary" />
-            <span>Green G(P)4 Supply Chain Framework · LCIE Landed Cost Agent</span>
+      {/* ===== Footer (sticky to bottom) ===== */}
+      <footer className="mt-auto border-t border-cyan-200/50 dark:border-cyan-900/40 bg-cyan-50/50 dark:bg-cyan-950/20">
+        <div className="container mx-auto px-4 py-8">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+            <div className="md:col-span-2">
+              <div className="flex items-center gap-3 mb-3">
+                <Gp4Logo size={36} />
+                <div className="leading-tight">
+                  <p className="font-bold font-display text-sm">{BRAND_FULL}</p>
+                  <p className="text-xs text-muted-foreground">Hydrogen Systems &amp; Supply Chain Framework</p>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground max-w-md leading-relaxed">
+                Hydrogen hardware, pharmacology-grade wellness intelligence, and forensic landed-cost engineering — merged into one executive control deck. This page runs the live LCIE Landed Cost Engine.
+              </p>
+              <Button variant="outline" size="sm" className="mt-3 gap-1.5 border-cyan-300/60 text-cyan-700 dark:text-cyan-300 dark:border-cyan-800/60 hover:bg-cyan-50 dark:hover:bg-cyan-950/40">
+                <Truck className="h-3.5 w-3.5" /> Schedule an Enterprise Green Audit
+              </Button>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Live Engines</p>
+              <ul className="space-y-1.5 text-xs">
+                <li className="flex items-center gap-1.5 text-cyan-700 dark:text-cyan-300"><span className="h-1.5 w-1.5 rounded-full bg-cyan-500" /> LCIE Landed Cost Engine</li>
+                <li className="flex items-center gap-1.5 text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" /> H₂ Protocol &amp; Usage Tool</li>
+                <li className="flex items-center gap-1.5 text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" /> ICE Fleet Savings Engine</li>
+                <li className="flex items-center gap-1.5 text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" /> Executive ROI Summary</li>
+              </ul>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Divisions</p>
+              <ul className="space-y-1.5 text-xs text-muted-foreground">
+                <li className="flex items-center gap-1.5"><Leaf className="h-3 w-3" /> Going Green with Hydrogen</li>
+                <li className="flex items-center gap-1.5"><Leaf className="h-3 w-3" /> {BRAND} Supply Chain Framework</li>
+                <li className="flex items-center gap-1.5"><Leaf className="h-3 w-3" /> Molecular Hydrogen Science</li>
+              </ul>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1"><Truck className="h-3 w-3" /> US HTS · UK Global Tariff · EU TARIC</span>
-            <span className="hidden sm:inline">·</span>
-            <span>Demo · rates are research-typical MFN</span>
+          <Separator className="mb-4" />
+          <div className="space-y-2">
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              <strong className="text-foreground">Financial disclaimer:</strong> savings, ROI, and landed-cost outputs are modelled estimates based on the assumptions displayed on this page; Section 301 / IEEPA rates are subject to executive action and change without notice. Actual results depend on the HTS subheading, country of origin, tariff programme eligibility, and the importer's facts.
+            </p>
+          </div>
+          <div className="mt-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-muted-foreground">
+            <span>© 2026 {BRAND_FULL}. All rights reserved. {BRAND} is a trademark of its owner.</span>
+            <span className="flex items-center gap-1.5"><ShieldCheck className="h-3 w-3 text-cyan-600" /> MFN / Column 1 rates · modelled for demonstration</span>
           </div>
         </div>
       </footer>
@@ -529,16 +611,16 @@ function ResultsDashboard({
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="space-y-6">
-      <Card className="border-emerald-200/60 dark:border-emerald-900/40">
+      <Card className="border-cyan-200/60 dark:border-cyan-900/40">
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <CardTitle className="flex items-center gap-2"><Calculator className="h-5 w-5 text-primary" /> Landed cost results — {calc.poNumber}</CardTitle>
-              <CardDescription>AI-determined HS codes · duty · VAT · MPF/HMF · freight &amp; insurance across 3 regions.</CardDescription>
+              <CardTitle className="flex items-center gap-2"><Calculator className="h-5 w-5 text-cyan-600 dark:text-cyan-400" /> Landed cost results — {calc.poNumber}</CardTitle>
+              <CardDescription>AI-determined HS codes · MFN duty · Section 301 / IEEPA · VAT · MPF/HMF · freight &amp; insurance across 3 regions.</CardDescription>
             </div>
             <div className="flex items-center gap-2">
               {cheapest && (
-                <Badge className="gap-1 bg-emerald-600 hover:bg-emerald-600 text-white">
+                <Badge className="gap-1 bg-cyan-600 hover:bg-cyan-600 text-white">
                   <ShieldCheck className="h-3.5 w-3.5" /> Lowest effective rate: {cheapest.flag} {cheapest.region} ({(cheapest.effectiveRate * 100).toFixed(2)}%)
                 </Badge>
               )}
@@ -557,9 +639,9 @@ function ResultsDashboard({
         <RegionCard calc={eu} dets={detsFor('EU')} accent="eu" />
       </div>
 
-      <Card className="border-emerald-200/60 dark:border-emerald-900/40">
+      <Card className="border-cyan-200/60 dark:border-cyan-900/40">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2"><ScanLine className="h-4 w-4 text-primary" /> Per-line HS determination &amp; reasoning</CardTitle>
+          <CardTitle className="text-base flex items-center gap-2"><ScanLine className="h-4 w-4 text-cyan-600 dark:text-cyan-400" /> Per-line HS determination &amp; reasoning</CardTitle>
           <CardDescription>What the LCIE agent classified for every line, per region — with confidence and grounding.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -581,28 +663,36 @@ function ResultsDashboard({
                         <TableHead className="min-w-[200px]">Item</TableHead>
                         <TableHead className="w-36">HS code</TableHead>
                         <TableHead className="text-right w-20">Duty</TableHead>
-                        <TableHead className="text-right w-20">VAT</TableHead>
+                        {r === 'US' && <TableHead className="text-right w-20">§301</TableHead>}
+                        {r === 'US' && <TableHead className="text-right w-20">IEEPA</TableHead>}
+                        {r !== 'US' && <TableHead className="text-right w-20">VAT</TableHead>}
                         <TableHead className="w-24">Conf.</TableHead>
                         <TableHead className="min-w-[260px]">Reasoning</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {detsFor(r).map((d) => (
-                        <TableRow key={`${d.lineItemId}-${d.region}`}>
-                          <TableCell className="font-mono text-xs text-muted-foreground">{d.lineNumber}</TableCell>
-                          <TableCell><p className="text-sm font-medium leading-tight">{d.description}</p><p className="text-[11px] text-muted-foreground">{d.tariffDescription}</p></TableCell>
-                          <TableCell className="font-mono text-xs">{d.hsCode || '—'}</TableCell>
-                          <TableCell className="text-right font-mono text-xs">{d.dutyType === 'free' ? 'Free' : fmtPct(d.dutyRate)}</TableCell>
-                          <TableCell className="text-right font-mono text-xs">{r === 'US' ? '—' : fmtPct(d.vatRate)}</TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-1.5">
-              <Progress value={d.confidence * 100} className="h-1.5 w-12 [&>div]:bg-emerald-500" />
-                              <span className="text-[10px] text-muted-foreground">{Math.round(d.confidence * 100)}%</span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground leading-snug">{d.reasoning ?? '—'}</TableCell>
-                        </TableRow>
-                      ))}
+                      {detsFor(r).map((d) => {
+                        const s301 = (() => { try { return JSON.parse(d.additionalLevies ?? '{}').Section301 ?? 0; } catch { return 0; } })();
+                        const ieepa = (() => { try { return JSON.parse(d.additionalLevies ?? '{}').IEEPA ?? 0; } catch { return 0; } })();
+                        return (
+                          <TableRow key={`${d.lineItemId}-${d.region}`}>
+                            <TableCell className="font-mono text-xs text-muted-foreground">{d.lineNumber}</TableCell>
+                            <TableCell><p className="text-sm font-medium leading-tight">{d.description}</p><p className="text-[11px] text-muted-foreground">{d.tariffDescription}</p></TableCell>
+                            <TableCell className="font-mono text-xs">{d.hsCode || '—'}</TableCell>
+                            <TableCell className="text-right font-mono text-xs">{d.dutyType === 'free' ? 'Free' : fmtPct(d.dutyRate)}</TableCell>
+                            {r === 'US' && <TableCell className="text-right font-mono text-xs text-violet-600 dark:text-violet-400">{fmtPct(s301)}</TableCell>}
+                            {r === 'US' && <TableCell className="text-right font-mono text-xs text-pink-600 dark:text-pink-400">{fmtPct(ieepa)}</TableCell>}
+                            {r !== 'US' && <TableCell className="text-right font-mono text-xs">{fmtPct(d.vatRate)}</TableCell>}
+                            <TableCell>
+                              <div className="flex items-center gap-1.5">
+                                <Progress value={d.confidence * 100} className="h-1.5 w-12 [&>div]:bg-cyan-500" />
+                                <span className="text-[10px] text-muted-foreground">{Math.round(d.confidence * 100)}%</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground leading-snug">{d.reasoning ?? '—'}</TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </ScrollArea>
@@ -616,12 +706,14 @@ function ResultsDashboard({
 }
 
 function RegionCard({ calc, dets, accent }: { calc: RegionCalculation; dets: DeterminationResult[]; accent: 'us' | 'uk' | 'eu' }) {
-  const rows: { label: string; value: number; muted?: boolean; hint?: string }[] = [
+  const rows: { label: string; value: number; muted?: boolean; hint?: string; color?: string }[] = [
     { label: 'FOB subtotal (goods)', value: calc.subtotal, muted: true },
-    { label: 'Import duty', value: calc.dutyTotal, hint: 'AI-determined HS rate × calc base' },
+    { label: 'MFN import duty', value: calc.dutyTotal, hint: 'AI-determined HS rate × calc base' },
     ...(calc.region === 'US'
       ? [
-          { label: 'MPF (0.3464%)', value: calc.mpfTotal, hint: 'Merchandise Processing Fee, capped $31.67–$614.35' },
+          { label: 'Section 301 surcharge', value: calc.section301Total, hint: 'China trade-remedy List 3/4A — 25% on FOB for CN-origin goods', color: 'text-violet-600 dark:text-violet-400' },
+          { label: 'IEEPA reciprocal tariff', value: calc.ieepaTotal, hint: '2025 IEEPA reciprocal duty — modelled 34% on CN-origin FOB', color: 'text-pink-600 dark:text-pink-400' },
+          { label: 'MPF (0.3464%)', value: calc.mpfTotal, hint: 'Merchandise Processing Fee, floored $31.67 / capped $614.35' },
           { label: 'HMF (0.125%)', value: calc.hmfTotal, hint: 'Harbor Maintenance Fee (ocean)' },
         ]
       : []),
@@ -631,15 +723,15 @@ function RegionCard({ calc, dets, accent }: { calc: RegionCalculation; dets: Det
     ...(calc.otherLevies > 0 ? [{ label: 'Other levies', value: calc.otherLevies }] : []),
   ];
   const avgConfidence = dets.length ? dets.reduce((s, d) => s + d.confidence, 0) / dets.length : 0;
-  const accentRing = accent === 'us' ? 'before:bg-rose-400' : accent === 'uk' ? 'before:bg-blue-400' : 'before:bg-amber-400';
+  const accentRing = accent === 'us' ? 'before:bg-violet-400' : accent === 'uk' ? 'before:bg-cyan-400' : 'before:bg-emerald-400';
   return (
-    <Card className={`relative overflow-hidden border-emerald-200/60 dark:border-emerald-900/40 before:absolute before:left-0 before:top-0 before:h-full before:w-1 ${accentRing}`}>
+    <Card className={`relative overflow-hidden border-cyan-200/60 dark:border-cyan-900/40 before:absolute before:left-0 before:top-0 before:h-full before:w-1 ${accentRing}`}>
       <CardHeader className="pb-2 pl-5">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base flex items-center gap-2"><span className="text-lg">{calc.flag}</span> {calc.label}</CardTitle>
           <Badge variant="outline" className="font-mono">{calc.currency}</Badge>
         </div>
-        <CardDescription className="pl-5">{calc.region === 'US' ? 'Duty on FOB · MPF/HMF · no federal VAT' : 'Duty on CIF · VAT on (CIF + duty)'}</CardDescription>
+        <CardDescription className="pl-5">{calc.region === 'US' ? 'Duty on FOB · §301 / IEEPA · MPF/HMF · no federal VAT' : 'Duty on CIF · VAT on (CIF + duty)'}</CardDescription>
       </CardHeader>
       <CardContent className="pl-5 pb-3 pt-0">
         <ul className="space-y-1.5 text-sm">
@@ -647,11 +739,11 @@ function RegionCard({ calc, dets, accent }: { calc: RegionCalculation; dets: Det
             <li key={r.label} className="flex items-center justify-between gap-2">
               <TooltipProvider delayDuration={150}>
                 <Tooltip>
-                  <TooltipTrigger asChild><span className={`text-xs ${r.muted ? 'text-muted-foreground' : ''}`}>{r.label}</span></TooltipTrigger>
+                  <TooltipTrigger asChild><span className={`text-xs ${r.muted ? 'text-muted-foreground' : r.color ?? ''}`}>{r.label}</span></TooltipTrigger>
                   {r.hint && <TooltipContent><p className="max-w-[220px]">{r.hint}</p></TooltipContent>}
                 </Tooltip>
               </TooltipProvider>
-              <span className={`font-mono ${r.muted ? 'text-muted-foreground' : 'font-medium'}`}>{fmtMoney(r.value, calc.currency)}</span>
+              <span className={`font-mono ${r.color ? r.color : r.muted ? 'text-muted-foreground' : 'font-medium'}`}>{fmtMoney(r.value, calc.currency)}</span>
             </li>
           ))}
         </ul>
@@ -659,7 +751,7 @@ function RegionCard({ calc, dets, accent }: { calc: RegionCalculation; dets: Det
         <div className="flex items-end justify-between">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Total landed cost</p>
-            <p className="text-2xl font-bold font-mono text-primary">{fmtMoney(calc.totalLandedCost, calc.currency)}</p>
+            <p className="text-2xl font-bold font-mono text-cyan-700 dark:text-cyan-300">{fmtMoney(calc.totalLandedCost, calc.currency)}</p>
           </div>
           <div className="text-right">
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Effective rate</p>
@@ -667,10 +759,10 @@ function RegionCard({ calc, dets, accent }: { calc: RegionCalculation; dets: Det
           </div>
         </div>
         <div className="mt-3 flex items-center justify-between text-xs">
-          <span className="text-muted-foreground flex items-center gap-1"><ShieldCheck className="h-3 w-3 text-emerald-500" /> avg agent confidence</span>
+          <span className="text-muted-foreground flex items-center gap-1"><ShieldCheck className="h-3 w-3 text-cyan-600" /> avg agent confidence</span>
           <span className="font-mono">{Math.round(avgConfidence * 100)}%</span>
         </div>
-        <Progress value={avgConfidence * 100} className="mt-1 h-1 [&>div]:bg-emerald-500" />
+        <Progress value={avgConfidence * 100} className="mt-1 h-1 [&>div]:bg-cyan-500" />
       </CardContent>
     </Card>
   );

@@ -1,47 +1,57 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, Sora, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const sora = Sora({
+  variable: "--font-sora",
   subsets: ["latin"],
+  weight: ["400", "600", "700", "800"],
+});
+
+const plexMono = IBM_Plex_Mono({
+  variable: "--font-plex-mono",
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
 });
 
 export const metadata: Metadata = {
-  title: "LCIE Landed Cost Agent | Green G(P)4 Supply Chain Framework",
+  title: "Green G(P)\u2074\u2122 Global Operations \u2014 LCIE Landed Cost Engine | Hydrogen Systems & Supply Chain Framework",
   description:
-    "AI agent for harmonized code auto-determination and landed cost calculation across US (HTS), UK (Global Tariff) and EU (TARIC) when a Purchase Order is uploaded.",
+    "Green G(P)\u2074\u2122 Global Operations \u2014 Plan, Procure, Produce, Provide. The LCIE Landed Cost Engine is an AI agent that auto-determines HS codes (US HTS, UK Global Tariff, EU TARIC) and calculates duty, Section 301 / IEEPA surcharge, MPF, HMF and VAT when a Purchase Order is uploaded.",
   keywords: [
+    "Green G(P)4",
     "LCIE",
     "Landed Cost",
     "HS Code",
     "HTS",
     "UK Global Tariff",
     "EU TARIC",
-    "Customs Duty",
-    "VAT",
+    "Section 301",
+    "IEEPA",
     "MPF",
     "HMF",
-    "Green G(P)4",
-    "Supply Chain",
+    "VAT",
+    "Supply Chain Framework",
+    "Plan Procure Produce Provide",
     "AI Customs Broker",
+    "Hydrogen Systems",
   ],
-  authors: [{ name: "Green G(P)4 Supply Chain Framework" }],
+  authors: [{ name: "Green G(P)\u2074\u2122 Global Operations" }],
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: "/logo.svg",
   },
   openGraph: {
-    title: "LCIE Landed Cost Agent",
+    title: "Green G(P)\u2074\u2122 Global Operations \u2014 LCIE Landed Cost Engine",
     description:
-      "AI-assisted HS code + duty/VAT/levy determination for US, UK and EU.",
-    siteName: "Green G(P)4 Supply Chain Framework",
+      "AI-assisted HS code + duty/VAT/Section 301 determination for US, UK and EU.",
+    siteName: "Green G(P)\u2074\u2122 Global Operations",
     type: "website",
   },
 };
@@ -54,7 +64,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
+        className={`${inter.variable} ${sora.variable} ${plexMono.variable} antialiased bg-background text-foreground`}
       >
         <ThemeProvider
           attribute="class"

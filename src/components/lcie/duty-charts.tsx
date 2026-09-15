@@ -35,12 +35,14 @@ function fmt(n: number, c: string) {
 const STACK_COLORS = {
   Subtotal: 'var(--chart-3)',
   Duty: 'var(--chart-1)',
+  'Section 301': '#7c3aed',
+  IEEPA: '#db2777',
   VAT: 'var(--chart-2)',
   MPF: 'var(--chart-4)',
-  HMF: 'var(--chart-4)',
+  HMF: '#a3a3a3',
   Freight: 'var(--muted-foreground)',
   Insurance: 'var(--chart-5)',
-  'Other levies': 'var(--chart-5)',
+  'Other levies': '#f97316',
 } as const;
 
 export function DutyCharts({ calculations }: { calculations: RegionCalculation[] }) {
@@ -48,6 +50,8 @@ export function DutyCharts({ calculations }: { calculations: RegionCalculation[]
     region: c.region,
     Subtotal: Math.round(c.subtotal),
     Duty: Math.round(c.dutyTotal),
+    'Section 301': Math.round(c.section301Total),
+    IEEPA: Math.round(c.ieepaTotal),
     VAT: Math.round(c.vatTotal),
     MPF: Math.round(c.mpfTotal),
     HMF: Math.round(c.hmfTotal),
@@ -68,7 +72,9 @@ export function DutyCharts({ calculations }: { calculations: RegionCalculation[]
   const donutData = top
     ? [
         { name: 'Subtotal (goods)', value: Math.round(top.subtotal), color: 'var(--chart-3)' },
-        { name: 'Import duty', value: Math.round(top.dutyTotal), color: 'var(--chart-1)' },
+        { name: 'Import duty (MFN)', value: Math.round(top.dutyTotal), color: 'var(--chart-1)' },
+        { name: 'Section 301', value: Math.round(top.section301Total), color: '#7c3aed' },
+        { name: 'IEEPA reciprocal', value: Math.round(top.ieepaTotal), color: '#db2777' },
         { name: 'VAT', value: Math.round(top.vatTotal), color: 'var(--chart-2)' },
         { name: 'MPF', value: Math.round(top.mpfTotal), color: 'var(--chart-4)' },
         { name: 'HMF', value: Math.round(top.hmfTotal), color: '#a3a3a3' },
