@@ -12,6 +12,7 @@ export interface LineItemInput {
   quantity: number;
   unit?: string;
   unitValue: number;
+  totalValue?: number; // the PO's stated line total, if present (else computed qty×unitValue)
   material?: string;
   originCountry?: string;
 }

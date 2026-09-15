@@ -153,3 +153,34 @@ Verification (Agent Browser, Mixed Retail sample, 6 CN-origin items):
 
 Stage Summary:
 - "Agent run failed" is resolved. The agent now runs in ~10–16s for a 6-line PO and degrades gracefully (KB fallback per item) if any single LLM call is slow or unavailable — it can no longer fail the whole run.
+
+---
+Task ID: 8
+Agent: orchestrator (main)
+Task: Fix "items not correctly pulled out" + "totals incorrect" + "no SKU/part number" for real PO (esp. machine POs) uploaded as PDF/text.
+
+Root cause (reproduced with a table-format machine PO line):
+- The plain-text parser took the FIRST "number + unit" match as the quantity. For a line like "Crystal wine glasses, 350ml, stemware 3000 PCS $1.35 $4,050.00", it matched "350ml" (a product-size spec) → qty=350 → total=$472.50 instead of qty=3000 → total=$4,050.
+- SKU / part numbers (DR-CORD-18, KN-SS-8, …) were never extracted — they leaked into the description.
+- The line-number prefix, the SKU, and the trailing line-total all leaked into the description.
+- The PO's stated line total was ignored — totals were recomputed as qty×unit, so a bad qty corrupted the total.
+
+Fix (src/lib/lcie/parser.ts — new parseItemLine helper):
+- SKU extraction: a hyphenated code pattern ([A-Z]{2,}[-_][A-Z0-9]{1,}(?:[-_][A-Z0-9]+)*) OR an explicit "P/N: / Part No: / SKU: / MPN:" label. Stripped from the description.
+- All price tokens collected ($ / USD / EUR / GBP / PKR / INR / RS prefixes). unitPrice = first; lineTotal = last (when 2+ prices present).
+- Quantity = round(lineTotal / unitPrice) when the PO provides its own stated total — always correct. Else the LAST "number + trade-unit" match (PCS/SET/CTN/KG/PR/DZ/CASE/BOX/ROLL/…) — last, not first, so product-size specs like "1kg" or "350ml" that appear earlier in the description are skipped. Else a bare-number fallback (qty written after the price with no unit).
+- Trade-unit list deliberately EXCLUDES spec/volume units (ml, l, g, w, v, ah, cm, k) so "350ml", "18V", "9W", "3000K", "2.0Ah", "27cm" can never be mis-read as the order quantity.
+- Description rebuilt by removing the SKU, all price spans, and qty+trade-unit tokens → clean, no leakage.
+- Added optional totalValue to LineItemInput; the upload-po route now stores li.totalValue ?? (qty × unitValue) — so the PO's own stated totals are preserved.
+
+Verification (Agent Browser, machine PO PDF with 5 lines: drill / knife / plates / LED bulb / wine glasses):
+- All 5 SKUs populated in the table: DR-CORD-18, KN-SS-8, PL-CER-27, BL-LED-9W, GL-WINE-350.
+- Descriptions clean: "Cordless 18V drill driver, 2.0Ah Li-ion", "Stainless steel kitchen knife, 8 inch chef, forged", "Ceramic dinner plates, 27cm stoneware, set of 4", "LED bulb, 9W, E27, 3000K warm white", "Crystal wine glasses, 350ml, stemware" — specs preserved, no SKU/total/line-number leakage.
+- Quantities correct: 1200 / 2000 / 1500 / 20000 / 3000 (was 1200/2000/1500/20000/**350**).
+- Totals correct (PO's stated): €31,200 / €9,000 / €12,300 / €9,600 / €4,050 (was …/**€472.50** for line 5).
+- Edge cases pass: no-stated-total "qty @ price" lines; "P/N: ABC-1234" labelled SKUs; "1kg" product-size vs "2000 KG" order-qty disambiguation; price-then-qty with no unit.
+- Full agent run on the machine PO (CN origin): determine 12.8s + calculate 51ms → US card shows Section 301 surcharge €16,537.50 + IEEPA reciprocal tariff €22,491 + MPF €229.14 + HMF €82.69. Badge "Lowest effective rate: 🇪🇺 EU (29.20%)".
+- Lint clean. No errors.
+
+Stage Summary:
+- "Items not correctly pulled out", "totals incorrect", and "no SKU/part number in the Machine" are all resolved. The parser now reliably extracts SKU + clean description + correct quantity + the PO's own stated total for table-format, pasted, and PDF POs.

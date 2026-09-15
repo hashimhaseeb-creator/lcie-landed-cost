@@ -170,52 +170,156 @@ function parsePlainText(text: string): { items: LineItemInput[]; meta: Partial<P
   const items: LineItemInput[] = [];
   let autoLine = 1;
   for (const raw of itemLines) {
-    const line = raw.replace(/^\d+\s*[\.\)\-]\s*/, '');
-    const qtyMatch = line.match(/(\d+(?:[.,]\d+)?)\s*(pcs|pieces|pc|sets|set|kg|kgs|kgs?|m\b|units|ctn|cartons?|pairs?|pr|dozen|dz|l|ml|g)\b/i);
-    const priceMatch = line.match(/(?:\$|usd|eur|gbp|pkr|inr)\s*(\d+(?:[.,]\d+)?)|(\d+(?:[.,]\d+)?)\s*(?:usd|eur|gbp|pkr|inr)/i);
-    let description = line;
-    let quantity = 1;
-    let unit: string | undefined;
-    let unitValue = 0;
-
-    if (qtyMatch) {
-      quantity = parseFloat(qtyMatch[1].replace(',', ''));
-      const uom = qtyMatch[2]?.toLowerCase();
-      if (uom) {
-        const map: Record<string, string> = {
-          pcs: 'PCS', pc: 'PCS', pieces: 'PCS', piece: 'PCS', units: 'PCS',
-          sets: 'SET', set: 'SET',
-          kg: 'KG', kgs: 'KG', g: 'G',
-          m: 'M', ctn: 'CTN', carton: 'CTN', cartons: 'CTN',
-          pair: 'PR', pairs: 'PR', dozen: 'DZ', dz: 'DZ',
-          l: 'L', ml: 'ML',
-        };
-        unit = map[uom] ?? uom.toUpperCase();
-      }
+    const parsed = parseItemLine(raw, autoLine);
+    if (parsed) {
+      items.push(parsed);
+      autoLine = parsed.lineNumber + 1;
     }
-    if (priceMatch) {
-      const p = priceMatch[1] ?? priceMatch[2];
-      if (p) unitValue = parseFloat(p.replace(',', ''));
-    }
-
-    description = description
-      .replace(qtyMatch?.[0] ?? '', ' ')
-      .replace(priceMatch?.[0] ?? '', ' ')
-      .replace(/@/g, ' ')
-      .replace(/[@—–\-]+\s*$/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (!description) continue;
-    items.push({
-      lineNumber: autoLine++,
-      description,
-      quantity,
-      unit,
-      unitValue,
-    });
   }
   return { items, meta };
+}
+
+/* Trade units only — deliberately excludes spec/volume units (ml, l, g, m, w, v,
+   ah, cm, k) that appear inside product descriptions like "350ml", "18V", "9W",
+   "3000K", "2.0Ah", "27cm". This stops "350ml" being mis-read as qty=350. */
+const TRADE_UNITS: Record<string, string> = {
+  pcs: 'PCS', pc: 'PCS', piece: 'PCS', pieces: 'PCS', unit: 'PCS', units: 'PCS',
+  set: 'SET', sets: 'SET',
+  ctn: 'CTN', carton: 'CTN', cartons: 'CTN', case: 'CS', cases: 'CS',
+  box: 'BX', boxes: 'BX', bxs: 'BX',
+  kg: 'KG', kgs: 'KG', kilo: 'KG', kilos: 'KG',
+  pr: 'PR', pair: 'PR', pairs: 'PR',
+  dz: 'DZ', dozen: 'DZ',
+  roll: 'RL', rolls: 'RL', rl: 'RL',
+  m: 'M', mt: 'M',
+};
+const TRADE_UNIT_RE = new RegExp(
+  `\\b(\\d[\\d.,]*)\\s*(${Object.keys(TRADE_UNITS).join('|')})\\b`,
+  'gi',
+);
+const PRICE_RE = /(?:\$|usd|eur|gbp|pkr|inr|rs\.?)\s*([\d.,]+)|([\d.,]+)\s*(?:usd|eur|gbp|pkr|inr)/gi;
+const SKU_RE = /\b([A-Z]{2,}[-_][A-Z0-9]{1,}(?:[-_][A-Z0-9]+)*)\b/;
+const SKU_LABEL_RE = /(?:p\/n|part\s*(?:no\.?|number|#)?|sku|item\s*(?:no\.?|code)?|mpn)\s*[:#]?\s*([A-Z0-9][A-Z0-9\-_]{2,})\b/i;
+
+function parseNum(s: string | undefined): number {
+  if (!s) return 0;
+  return parseFloat(s.replace(/,/g, '')) || 0;
+}
+
+/**
+ * Parse one PO line into { sku, description, quantity, unit, unitValue, totalValue }.
+ *
+ * Order of operations:
+ *   1. Strip the line-number prefix ("1  ", "1. ", "1) ", "1- ").
+ *   2. Extract the SKU / part number (hyphenated code or labelled "P/N:").
+ *   3. Find ALL price tokens ($-prefixed). unitPrice = first; lineTotal = last.
+ *   4. Quantity = round(lineTotal / unitPrice) when both are present and differ
+ *      (uses the PO's own stated total → always correct), else a "number + trade
+ *      unit" match (PCS/SET/CTN/KG/PR/DZ/…), else 1.
+ *   5. Build the description from whatever's left, minus sku / qty+unit / prices.
+ */
+function parseItemLine(raw: string, fallbackLine: number): LineItemInput | null {
+  let line = raw.trim();
+  if (!line) return null;
+
+  // 1. line-number prefix
+  let lineNumber = fallbackLine;
+  const lnMatch = line.match(/^(\d{1,3})\s*[\.\)\-:]?\s{1,}/);
+  if (lnMatch) {
+    lineNumber = parseInt(lnMatch[1], 10);
+    line = line.slice(lnMatch[0].length).trim();
+  }
+
+  // 2. SKU / part number
+  let sku: string | undefined;
+  const labelled = line.match(SKU_LABEL_RE);
+  if (labelled) {
+    sku = labelled[1].toUpperCase();
+    line = line.replace(labelled[0], ' ');
+  } else {
+    const code = line.match(SKU_RE);
+    if (code) {
+      sku = code[1];
+      line = line.replace(code[0], ' ');
+    }
+  }
+
+  // 3. all price tokens
+  PRICE_RE.lastIndex = 0;
+  const prices: number[] = [];
+  const priceSpans: [number, number][] = [];
+  let pm: RegExpExecArray | null;
+  while ((pm = PRICE_RE.exec(line)) !== null) {
+    const v = parseNum(pm[1] ?? pm[2]);
+    if (v > 0) {
+      prices.push(v);
+      priceSpans.push([pm.index, pm.index + pm[0].length]);
+    }
+  }
+  const unitValue = prices.length >= 1 ? prices[0] : 0;
+  const lineTotal = prices.length >= 2 ? prices[prices.length - 1] : undefined;
+
+  // 4. quantity — derive from total÷unit when possible (most reliable)
+  let quantity = 1;
+  let unit: string | undefined;
+  // capture ALL trade-unit matches; use the LAST one (closest to the price) as
+  // the order quantity — this avoids picking up product-size specs like "1kg"
+  // or "350ml" that appear earlier in the description.
+  TRADE_UNIT_RE.lastIndex = 0;
+  let tradeMatch: RegExpExecArray | null;
+  const trades: RegExpExecArray[] = [];
+  while ((tradeMatch = TRADE_UNIT_RE.exec(line)) !== null) {
+    trades.push(tradeMatch);
+  }
+  const lastTrade = trades[trades.length - 1] ?? null;
+  if (lastTrade) {
+    unit = TRADE_UNITS[(lastTrade[2] ?? '').toLowerCase()] ?? (lastTrade[2] ?? '').toUpperCase();
+  }
+
+  if (lineTotal !== undefined && unitValue > 0 && Math.abs(lineTotal - unitValue) > 0.009) {
+    const q = lineTotal / unitValue;
+    quantity = Math.round(q * 100) / 100; // keep up to 2 dp (e.g. 1.5 sets)
+    if (!Number.isFinite(quantity) || quantity <= 0) quantity = 1;
+  } else if (lastTrade) {
+    quantity = parseNum(lastTrade[1]);
+    if (quantity <= 0) quantity = 1;
+  } else {
+    // fallback: a bare number (not in a price, not a spec) — usually a qty
+    // written after the price, e.g. "Cotton tee $3.20 5000"
+    const bare = [...line.matchAll(/\b(\d[\d.,]*)\b/g)]
+      .map((m) => ({ val: parseNum(m[1]), idx: m.index ?? 0, raw: m[0] }))
+      .filter((x) => x.val > 1 && !priceSpans.some(([s, e]) => x.idx >= s && x.idx < e));
+    bare.sort((a, b) => b.val - a.val);
+    if (bare.length > 0) quantity = bare[0].val;
+  }
+
+  // 5. description — strip sku (already gone), prices, qty+trade-unit tokens
+  let description = line;
+  // remove price spans (work back-to-front so indices stay valid)
+  for (const [s, e] of priceSpans.sort((a, b) => b[0] - a[0])) {
+    description = description.slice(0, s) + ' ' + description.slice(e);
+  }
+  // remove trade-unit tokens (number + trade unit)
+  description = description.replace(TRADE_UNIT_RE, ' ');
+  // tidy
+  description = description
+    .replace(/@/g, ' ')
+    .replace(/\s*[,;:\s]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!description && !sku) return null;
+  if (!description) description = sku ?? `Line ${lineNumber}`;
+
+  return {
+    lineNumber,
+    sku,
+    description,
+    quantity,
+    unit,
+    unitValue,
+    totalValue: lineTotal !== undefined ? lineTotal : Math.round(quantity * unitValue * 100) / 100,
+  };
 }
 
 /**

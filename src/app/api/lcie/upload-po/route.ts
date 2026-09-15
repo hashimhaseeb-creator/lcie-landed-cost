@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
             unitValue: li.unitValue,
             material: li.material ?? null,
             originCountry: li.originCountry ?? parsed.originCountry ?? null,
-            totalValue: li.quantity * li.unitValue,
+            totalValue: li.totalValue ?? li.quantity * li.unitValue,
           })),
         },
       },
