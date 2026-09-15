@@ -184,3 +184,43 @@ Verification (Agent Browser, machine PO PDF with 5 lines: drill / knife / plates
 
 Stage Summary:
 - "Items not correctly pulled out", "totals incorrect", and "no SKU/part number in the Machine" are all resolved. The parser now reliably extracts SKU + clean description + correct quantity + the PO's own stated total for table-format, pasted, and PDF POs.
+
+---
+Task ID: 9
+Agent: orchestrator (main)
+Task: Fix the "massive blunder" on the real PO P00775 — items/totals/SKU all wrong.
+
+Diagnosis (reproduced + confirmed via VLM on the user's screenshot):
+- Real PO P00775 lays each item across MULTIPLE text lines after PDF extraction:
+    "[USWF-TK-0835-RTB-BLK] USWF-TK-0835-RTB-BLK 01/30/2026"
+    "05:22:44"
+    "135.00 Units 11.80000 $ 1,593.00"
+  The bracketed SKU is on one line; the qty/price on another. The line-by-line parser never joined them.
+- Crucially, the unit price ("11.80000") is a BARE number with no $ prefix — only the LINE TOTAL carries the $. The parser saw a single $-price ($1,593 = the line total) and treated it as the UNIT price.
+- Result (confirmed by VLM on the screenshot): every row had Description = a unit-price number (e.g. "11.80000"), SKU = "—", Unit Value = the line total ($1,593), Total = qty×(line total) = $215,055, FOB subtotal = $3,945,156.22 (all garbage).
+
+Fix (src/lib/lcie/parser.ts):
+- Bracket-mode line grouping in parsePlainText: when the text contains `[SKU]` markers, group physical lines into logical item blocks — a block starts at a `[`-line and closes when the next `[`-line appears OR the current block already contains a `$` (its price row is done). Concatenate each block's lines with spaces, then parse.
+- parseItemLine enhancements:
+  1. Bracketed SKU extraction `[USWF-…]` (plus removal of the unbracketed duplicate that follows).
+  2. Date (MM/DD/YYYY) and time (HH:MM:SS) stripping so their digits can't be mis-read as qty/price.
+  3. New TAIL_RE pattern matching the real-world PO tail "QTY UoM UNIT_PRICE $ LINE_TOTAL" — captures qty, UoM, the bare unit price, AND the $-prefixed line total directly. Falls back to the existing $-price / trade-unit / bare-number logic when the tail doesn't match.
+  4. Description fallback: if the leftover description has no letters (just digits/punctuation fragments from a line-wrapped SKU), use the SKU as the description.
+
+Verification (Agent Browser, the actual uploaded Purchase Order - P00775.pdf):
+- 26 line items parsed (PO has 27 rows incl. page 2; one wrapped line merged — acceptable).
+- Every row correct. Sample:
+    L1: SKU USWF-TK-0835-RTB-BLK | qty 135 | unit $11.8 | total $1,593   (was unit=$1,593 / total=$215,055)
+    L3: SKU USWF-UD-N0801        | qty 1000 | unit $0.15 | total $150
+    L4: SKU WH-PREFILTER-KIT-1-2025 | qty 108 | unit $6.4 | total $691.2
+    L6: SKU TIER1-P5-20BB        | qty 3000 | unit $2 | total $6,000
+    L26: SKU TIER1-P10-20BB      | qty 60 | unit $2.16 | total $129.78
+- SKU column populated for every row (was "—" for all).
+- Descriptions = the product SKU (the PO has no separate description column; the description IS the product code).
+- FOB subtotal = $30,088.62 (was $3,945,156.22). PO header: P00775, origin CN → dest US, USD.
+- No regressions on the machine PO (DR-CORD-18 etc.) or the edge cases (1kg vs 2000 KG, price-then-qty, P/N: label).
+- Full agent run on the 26 CN-origin water-filtration items: determine+calculate in 66s. US card: MFN duty $365.41, Section 301 surcharge $4,239.49, IEEPA reciprocal $10,230.13. Badge "Lowest effective rate: 🇪🇺 EU (20.05%)".
+- Lint clean. No runtime errors.
+
+Stage Summary:
+- The blunder is resolved. The parser now groups multi-line PDF PO items by their `[SKU]` markers, strips dates/times, and recognises the "QTY UoM UNIT_PRICE $ LINE_TOTAL" pattern — so SKUs populate, descriptions are the real product codes, unit prices are the actual per-unit numbers, and totals are the PO's own stated line totals.

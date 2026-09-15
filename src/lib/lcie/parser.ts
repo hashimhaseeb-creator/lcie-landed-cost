@@ -152,23 +152,52 @@ function parsePlainText(text: string): { items: LineItemInput[]; meta: Partial<P
     return inc || cur || orig || dest ? true : false;
   };
 
+  const items: LineItemInput[] = [];
+  let autoLine = 1;
+
+  // Bracket mode: many real-world POs (e.g. P00775) lay each item across several
+  // text lines after PDF extraction — the `[SKU]` marker on one line, the time on
+  // the next, and the "QTY Units UNIT_PRICE $ LINE_TOTAL" on a third. Group those
+  // physical lines into one logical item block before parsing.
+  const bracketMode = rawLines.some((l) => /^\s*\[/.test(l));
+  if (bracketMode) {
+    const blocks: string[] = [];
+    let cur: string | null = null;
+    for (const raw of rawLines) {
+      const line = raw.trim();
+      if (!line) continue;
+      const startsNew = /^\[/.test(line);
+      const curComplete = cur !== null && /\$/.test(cur); // block already has its price row → item done
+      if (startsNew || curComplete) {
+        if (cur) { blocks.push(cur); cur = null; }
+      }
+      if (startsNew) {
+        cur = line;
+      } else if (cur !== null) {
+        cur += ' ' + line;
+      } else {
+        // header / footer line outside any item block → try metadata
+        setMetaFromLine(line);
+      }
+    }
+    if (cur) blocks.push(cur);
+    for (const block of blocks) {
+      const parsed = parseItemLine(block, autoLine);
+      if (parsed) { items.push(parsed); autoLine = parsed.lineNumber + 1; }
+    }
+    return { items, meta };
+  }
+
+  // Non-bracket mode: each physical line is a candidate item line.
   for (const raw of rawLines) {
-    // Detect line-item pattern: leading "N." or "N)" or "N-" numbering + a price somewhere
     const hasLineNumber = /^\d+\s*[\.\)\-]\s+/.test(raw);
     const priceMatch = raw.match(/(?:\$|usd|eur|gbp|pkr|inr)\s*(\d+(?:[.,]\d+)?)|(\d+(?:[.,]\d+)?)\s*(?:usd|eur|gbp|pkr|inr)/i);
-    // If it's clearly an item line (numbered or priced), keep it as an item
     if (hasLineNumber || priceMatch) {
       itemLines.push(raw);
       continue;
     }
-    // otherwise try to consume as metadata
-    if (!setMetaFromLine(raw)) {
-      // not metadata and not an item — skip (don't turn prose into items)
-    }
+    setMetaFromLine(raw);
   }
-
-  const items: LineItemInput[] = [];
-  let autoLine = 1;
   for (const raw of itemLines) {
     const parsed = parseItemLine(raw, autoLine);
     if (parsed) {
@@ -199,7 +228,16 @@ const TRADE_UNIT_RE = new RegExp(
 );
 const PRICE_RE = /(?:\$|usd|eur|gbp|pkr|inr|rs\.?)\s*([\d.,]+)|([\d.,]+)\s*(?:usd|eur|gbp|pkr|inr)/gi;
 const SKU_RE = /\b([A-Z]{2,}[-_][A-Z0-9]{1,}(?:[-_][A-Z0-9]+)*)\b/;
+const SKU_BRACKET_RE = /\[([A-Z0-9][A-Z0-9\-_./]{2,})\]/;
 const SKU_LABEL_RE = /(?:p\/n|part\s*(?:no\.?|number|#)?|sku|item\s*(?:no\.?|code)?|mpn)\s*[:#]?\s*([A-Z0-9][A-Z0-9\-_]{2,})\b/i;
+// The real-world PO tail: "QTY  Units  UNIT_PRICE  $  LINE_TOTAL" — note the unit
+// price is a BARE number (no $), and only the line TOTAL carries the $ prefix.
+const TAIL_RE = new RegExp(
+  `\\b(\\d[\\d.,]*)\\s*(${Object.keys(TRADE_UNITS).join('|')})\\s+(\\d[\\d.,]*)\\s*\\$\\s*([\\d.,]+)`,
+  'i',
+);
+const DATE_RE = /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g;
+const TIME_RE = /\b\d{1,2}:\d{2}(?::\d{2})?\s?(?:[ap]\.?m\.?)?\b/gi;
 
 function parseNum(s: string | undefined): number {
   if (!s) return 0;
@@ -207,16 +245,21 @@ function parseNum(s: string | undefined): number {
 }
 
 /**
- * Parse one PO line into { sku, description, quantity, unit, unitValue, totalValue }.
+ * Parse one PO line (or a multi-line item block, already concatenated) into
+ * { sku, description, quantity, unit, unitValue, totalValue }.
  *
  * Order of operations:
  *   1. Strip the line-number prefix ("1  ", "1. ", "1) ", "1- ").
- *   2. Extract the SKU / part number (hyphenated code or labelled "P/N:").
- *   3. Find ALL price tokens ($-prefixed). unitPrice = first; lineTotal = last.
- *   4. Quantity = round(lineTotal / unitPrice) when both are present and differ
- *      (uses the PO's own stated total → always correct), else a "number + trade
- *      unit" match (PCS/SET/CTN/KG/PR/DZ/…), else 1.
- *   5. Build the description from whatever's left, minus sku / qty+unit / prices.
+ *   2. Extract the SKU / part number — bracketed [SKU], labelled "P/N:", or a
+ *      hyphenated code (DR-CORD-18). Remove every occurrence from the line.
+ *   3. Strip dates (MM/DD/YYYY) and times (HH:MM:SS) so their digits can't be
+ *      mis-read as qty / unit price.
+ *   4. Try the real-world PO tail: "QTY Units UNIT_PRICE $ LINE_TOTAL" — here the
+ *      unit price is a BARE number and only the line TOTAL carries the $.
+ *      Fallback: collect all $-prices (first=unit, last=total) and/or a
+ *      "number + trade-unit" match.
+ *   5. Build the description from whatever's left, minus sku / dates / qty+unit /
+ *      prices.
  */
 function parseItemLine(raw: string, fallbackLine: number): LineItemInput | null {
   let line = raw.trim();
@@ -230,86 +273,100 @@ function parseItemLine(raw: string, fallbackLine: number): LineItemInput | null 
     line = line.slice(lnMatch[0].length).trim();
   }
 
-  // 2. SKU / part number
+  // 2. SKU / part number — bracketed [SKU] first, then labelled, then hyphenated
   let sku: string | undefined;
+  const bracket = line.match(SKU_BRACKET_RE);
+  if (bracket) {
+    sku = bracket[1];
+    line = line.replace(bracket[0], ' ');
+  }
   const labelled = line.match(SKU_LABEL_RE);
   if (labelled) {
     sku = labelled[1].toUpperCase();
     line = line.replace(labelled[0], ' ');
-  } else {
-    const code = line.match(SKU_RE);
-    if (code) {
-      sku = code[1];
-      line = line.replace(code[0], ' ');
-    }
+  }
+  // remove any (remaining) hyphenated SKU codes — incl. the unbracketed duplicate
+  // that usually follows a bracketed marker, e.g. "[USWF-TK-…] USWF-TK-…"
+  line = line.replace(SKU_RE, ' ');
+  if (!sku) {
+    const code = raw.match(SKU_RE); // fall back to first hyphenated code on the raw line
+    if (code) sku = code[1];
   }
 
-  // 3. all price tokens
-  PRICE_RE.lastIndex = 0;
-  const prices: number[] = [];
-  const priceSpans: [number, number][] = [];
-  let pm: RegExpExecArray | null;
-  while ((pm = PRICE_RE.exec(line)) !== null) {
-    const v = parseNum(pm[1] ?? pm[2]);
-    if (v > 0) {
-      prices.push(v);
-      priceSpans.push([pm.index, pm.index + pm[0].length]);
-    }
-  }
-  const unitValue = prices.length >= 1 ? prices[0] : 0;
-  const lineTotal = prices.length >= 2 ? prices[prices.length - 1] : undefined;
+  // 3. strip dates and times (their digits would otherwise pollute qty/price logic)
+  line = line.replace(DATE_RE, ' ').replace(TIME_RE, ' ');
 
-  // 4. quantity — derive from total÷unit when possible (most reliable)
+  // 4. Try the real-world PO tail: QTY  UoM  UNIT_PRICE  $  LINE_TOTAL
+  const tail = line.match(TAIL_RE);
   let quantity = 1;
   let unit: string | undefined;
-  // capture ALL trade-unit matches; use the LAST one (closest to the price) as
-  // the order quantity — this avoids picking up product-size specs like "1kg"
-  // or "350ml" that appear earlier in the description.
-  TRADE_UNIT_RE.lastIndex = 0;
-  let tradeMatch: RegExpExecArray | null;
-  const trades: RegExpExecArray[] = [];
-  while ((tradeMatch = TRADE_UNIT_RE.exec(line)) !== null) {
-    trades.push(tradeMatch);
-  }
-  const lastTrade = trades[trades.length - 1] ?? null;
-  if (lastTrade) {
-    unit = TRADE_UNITS[(lastTrade[2] ?? '').toLowerCase()] ?? (lastTrade[2] ?? '').toUpperCase();
-  }
+  let unitValue = 0;
+  let lineTotal: number | undefined;
+  const priceSpans: [number, number][] = [];
 
-  if (lineTotal !== undefined && unitValue > 0 && Math.abs(lineTotal - unitValue) > 0.009) {
-    const q = lineTotal / unitValue;
-    quantity = Math.round(q * 100) / 100; // keep up to 2 dp (e.g. 1.5 sets)
-    if (!Number.isFinite(quantity) || quantity <= 0) quantity = 1;
-  } else if (lastTrade) {
-    quantity = parseNum(lastTrade[1]);
-    if (quantity <= 0) quantity = 1;
+  if (tail) {
+    quantity = parseNum(tail[1]);
+    unit = TRADE_UNITS[(tail[2] ?? '').toLowerCase()] ?? (tail[2] ?? '').toUpperCase();
+    unitValue = parseNum(tail[3]);
+    lineTotal = parseNum(tail[4]);
+    line = line.replace(tail[0], ' ');
   } else {
-    // fallback: a bare number (not in a price, not a spec) — usually a qty
-    // written after the price, e.g. "Cotton tee $3.20 5000"
-    const bare = [...line.matchAll(/\b(\d[\d.,]*)\b/g)]
-      .map((m) => ({ val: parseNum(m[1]), idx: m.index ?? 0, raw: m[0] }))
-      .filter((x) => x.val > 1 && !priceSpans.some(([s, e]) => x.idx >= s && x.idx < e));
-    bare.sort((a, b) => b.val - a.val);
-    if (bare.length > 0) quantity = bare[0].val;
+    // fallback: collect all $-prefixed prices
+    PRICE_RE.lastIndex = 0;
+    const prices: number[] = [];
+    let pm: RegExpExecArray | null;
+    while ((pm = PRICE_RE.exec(line)) !== null) {
+      const v = parseNum(pm[1] ?? pm[2]);
+      if (v > 0) {
+        prices.push(v);
+        priceSpans.push([pm.index, pm.index + pm[0].length]);
+      }
+    }
+    unitValue = prices.length >= 1 ? prices[0] : 0;
+    lineTotal = prices.length >= 2 ? prices[prices.length - 1] : undefined;
+
+    // quantity — total÷unit when possible, else last trade-unit, else bare number
+    TRADE_UNIT_RE.lastIndex = 0;
+    const trades: RegExpExecArray[] = [];
+    let tm: RegExpExecArray | null;
+    while ((tm = TRADE_UNIT_RE.exec(line)) !== null) trades.push(tm);
+    const lastTrade = trades[trades.length - 1] ?? null;
+    if (lastTrade) {
+      unit = TRADE_UNITS[(lastTrade[2] ?? '').toLowerCase()] ?? (lastTrade[2] ?? '').toUpperCase();
+    }
+    if (lineTotal !== undefined && unitValue > 0 && Math.abs(lineTotal - unitValue) > 0.009) {
+      quantity = Math.round((lineTotal / unitValue) * 100) / 100;
+      if (!Number.isFinite(quantity) || quantity <= 0) quantity = 1;
+    } else if (lastTrade) {
+      quantity = parseNum(lastTrade[1]);
+      if (quantity <= 0) quantity = 1;
+    } else {
+      const bare = [...line.matchAll(/\b(\d[\d.,]*)\b/g)]
+        .map((m) => ({ val: parseNum(m[1]), idx: m.index ?? 0 }))
+        .filter((x) => x.val > 1 && !priceSpans.some(([s, e]) => x.idx >= s && x.idx < e))
+        .sort((a, b) => b.val - a.val);
+      if (bare.length > 0) quantity = bare[0].val;
+    }
   }
 
-  // 5. description — strip sku (already gone), prices, qty+trade-unit tokens
+  // 5. description — strip remaining prices + trade-unit tokens, tidy
   let description = line;
-  // remove price spans (work back-to-front so indices stay valid)
   for (const [s, e] of priceSpans.sort((a, b) => b[0] - a[0])) {
     description = description.slice(0, s) + ' ' + description.slice(e);
   }
-  // remove trade-unit tokens (number + trade unit)
-  description = description.replace(TRADE_UNIT_RE, ' ');
-  // tidy
   description = description
+    .replace(TRADE_UNIT_RE, ' ')
     .replace(/@/g, ' ')
     .replace(/\s*[,;:\s]+$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 
   if (!description && !sku) return null;
-  if (!description) description = sku ?? `Line ${lineNumber}`;
+  // if the description has no letters (just digits / punctuation / fragments
+  // left over from a line-wrapped SKU), fall back to the SKU as the description.
+  if (!description || !/[a-zA-Z]/.test(description)) {
+    description = sku ?? `Line ${lineNumber}`;
+  }
 
   return {
     lineNumber,
