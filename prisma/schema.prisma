@@ -1,0 +1,85 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// LCIE Landed Cost Agent — Green G(P)4 Supply Chain Framework
+
+model PurchaseOrder {
+  id           String   @id @default(cuid())
+  poNumber     String
+  supplier     String?
+  originCountry String?  // ISO 2-letter, e.g. CN, VN, IN
+  destinationCountry String? // US, GB, DE
+  currency     String   @default("USD")
+  incoterm     String?  // FOB, CIF, EXW, DDP
+  freight      Float    @default(0)
+  insurance    Float    @default(0)
+  otherCharges Float   @default(0)
+  source       String   @default("upload") // upload | manual | sample
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  lineItems             LineItem[]
+  landedCostCalculations LandedCostCalculation[]
+}
+
+model LineItem {
+  id            String   @id @default(cuid())
+  poId          String
+  po            PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  lineNumber    Int
+  sku           String?
+  description   String
+  quantity      Float
+  unit          String?  // PCS, SET, KG, M
+  unitValue     Float    // per-unit value in PO currency
+  totalValue    Float    // quantity * unitValue
+  material      String?  // optional material hint
+  originCountry String?  // override of PO origin
+  createdAt     DateTime @default(now())
+
+  determinations HsDetermination[]
+}
+
+model HsDetermination {
+  id           String   @id @default(cuid())
+  lineItemId   String
+  lineItem     LineItem @relation(fields: [lineItemId], references: [id], onDelete: Cascade)
+  region        String   // US | UK | EU
+  hsCode       String   // full country-specific code
+  tariffDescription String
+  dutyRate     Float     // decimal, e.g. 0.165
+  dutyType     String    // ad valorem | specific | free
+  vatRate      Float     // decimal; 0 for US
+  additionalLevies String? // JSON string of extra levies (MPF/HMF etc.) for transparency
+  confidence   Float     // 0..1
+  reasoning    String?   // LLM reasoning summary
+  groundingRefs String?  // knowledge base entry ids used, comma-separated
+  determinedAt  DateTime @default(now())
+}
+
+model LandedCostCalculation {
+  id            String   @id @default(cuid())
+  poId          String
+  po            PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  region        String   // US | UK | EU
+  subtotal      Float    // sum of line item values (FOB)
+  dutyTotal     Float
+  vatTotal      Float
+  mpfTotal      Float    // US only
+  hmfTotal      Float    // US only
+  otherLevies   Float    // EU/UK extra (e.g. excise)
+  freight       Float
+  insurance     Float
+  totalLandedCost Float
+  breakdownJson String?  // JSON string of per-line breakdown for audit
+  createdAt     DateTime @default(now())
+}
