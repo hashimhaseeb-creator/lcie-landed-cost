@@ -224,3 +224,32 @@ Verification (Agent Browser, the actual uploaded Purchase Order - P00775.pdf):
 
 Stage Summary:
 - The blunder is resolved. The parser now groups multi-line PDF PO items by their `[SKU]` markers, strips dates/times, and recognises the "QTY UoM UNIT_PRICE $ LINE_TOTAL" pattern — so SKUs populate, descriptions are the real product codes, unit prices are the actual per-unit numbers, and totals are the PO's own stated line totals.
+
+---
+Task ID: 10
+Agent: orchestrator (main)
+Task: Destination-aware single-region duty stack with live FX + editable landed-cost inputs.
+
+Requirements addressed:
+1. Generate HS code + full regulation stack (§301, IEEPA, MPF, HMF, VAT) for ONLY the final destined country — US dest → USD only; UK dest → GBP with live FX; EU dest → EUR/member currency with live FX.
+2. Detailed duty-stack calculation (waterfall).
+3. Let customers enter freight, insurance, and all related import charges.
+
+Implementation:
+- src/lib/lcie/destination.ts (new): ISO-2 country → {region: US|UK|EU, currency, vatRate, flag, label}. Eurozone→EUR, non-euro EU (PL/SE/CZ/HU/DK/RO/BG)→local currency, UK→GBP, US→USD, plus ~40 trade partners.
+- src/lib/lcie/fx.ts (new): live FX via ECB Frankfurter API (api.frankfurter.dev), 1h in-memory cache, fallback to open.er-api.com then static rates. getFxRate(from,to) → {rate, source, date, fetchedAt}.
+- src/lib/lcie/types.ts: RegionCalculation is now single-region + waterfall: WaterfallStep[]. LineBreakdown enriched (dutyRate, vatRate, section301Rate, ieepaRate, cifValue, confidence, reasoning). New LandedCostInputs (freight, insurance, otherCharges, customsBrokerFee, documentationFee, dutyAdvanceFee, harborOrPortFee, inlandDestinationDelivery, currency, incoterm). CalculateResponse now returns destination + fx + calculation (single).
+- src/lib/lcie/agent.ts: resolveDestination(po.destinationCountry) → classify & store determinations for ONLY that region (was US/UK/EU). Init step logs "destination: 🇬🇧 United Kingdom (UK, GBP)".
+- src/lib/lcie/calculator.ts: rewritten — computes ONLY the destination region; user inputs feed CIF base + final landed cost; everything FX-converted to destination currency; builds a step-by-step waterfall (FOB → +freight → +insurance → =CIF → +duty → +§301 → +IEEPA → +VAT → +MPF → +HMF → +broker/docs/advance/harbor/inland → =Total).
+- src/app/api/lcie/calculate/route.ts: accepts { poId, inputs }.
+- src/app/page.tsx: rebuilt results UI — single destination region card with the duty-stack waterfall (each step shows label + rate badge + amount + cumulative + progress bar), FX badge/inline bar ("1 USD = £0.74, ECB reference, 2026-09-15"), USD equivalent under the total, per-line table with destination-specific columns (§301/IEEPA for US, VAT for UK/EU). New LandedCostInputsForm with 8 editable charge fields (freight, insurance, other handling, customs broker, documentation, duty advance, harbor/port, inland delivery) + instant "Re-calculate landed cost".
+
+Verification (Agent Browser):
+- P00775 (dest US, PO USD): single 🇺🇸 US card, "no FX — PO already in destination currency", total $44,103.55, effective 46.58%, §301 + IEEPA present (CN-origin), waterfall FOB→+freight→+insurance→=CIF→+duty→+§301→+IEEPA→+MPF→+HMF→=Total. 26 items classified in 71s.
+- Pantry+Beauty sample (dest GB, PO USD): FX "1 USD = £0.74" (ECB live), total £46,031.81 in GBP, effective 23.64%. UK waterfall = FOB £37,231 → CIF £38,952 → +duty 2.73% £1,063 → +VAT 20% £6,017 → =Total £46,032. NO §301/IEEPA/MPF/HMF (destination-specific — UK has no such regulations). VAT present (UK 20%). 15s.
+- Editable inputs: entered customs broker fee $500 → re-calculated → total £46,031.81 → £46,402.64 = +£370.83 (= $500 × 0.74166 live FX). ✓ All charge fields wired + FX-converted.
+- Single region card (was 3): confirmed exactly 1 region card rendered.
+- Lint clean. No runtime errors.
+
+Stage Summary:
+- The LCIE engine now computes the duty stack for ONLY the PO's final destination country, with live ECB FX conversion to the destination currency (US→USD, UK→GBP, EU→EUR/member), a detailed step-by-step duty-stack waterfall, and a fully editable landed-cost inputs form (8 import charge fields) that re-calculates instantly. Section 301 / IEEPA / MPF / HMF appear only when the destination is the US; VAT appears only for UK/EU at the destination country's rate.

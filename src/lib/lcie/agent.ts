@@ -18,6 +18,7 @@
 import ZAI from 'z-ai-web-dev-sdk';
 import { db } from '@/lib/db';
 import { findHsEntries, HS_KNOWLEDGE_BASE, DUTY_RULES } from '@/lib/hs-knowledge-base';
+import { resolveDestination } from './destination';
 import type { Region, AgentStep, DeterminationResult, DetermineResponse } from './types';
 
 const MODEL_TAG = 'glm-5.2 (z-ai-web-dev-sdk)';
@@ -225,8 +226,14 @@ export async function determineHsCodesForPo(poId: string): Promise<DetermineResp
   // wipe previous determinations for this PO (idempotent re-run)
   await db.hsDetermination.deleteMany({ where: { lineItem: { poId } } });
 
+  // Resolve the PO's final destination country → the ONE duty region to classify
+  // for (US HTS / UK Global Tariff / EU TARIC). The agent no longer classifies
+  // all three — only the destined country's stack is computed and stored.
+  const dest = resolveDestination(po.destinationCountry);
+  const destRegion: Region = dest.region;
+
   const zai = await ZAI.create();
-  pushStep({ lineItemId: '', description: `LCIE agent initialised (model=${MODEL_TAG}, ${po.lineItems.length} item(s), ${CONCURRENCY} parallel)`, status: 'llm_call' });
+  pushStep({ lineItemId: '', description: `LCIE agent initialised (model=${MODEL_TAG}, ${po.lineItems.length} item(s), ${CONCURRENCY} parallel) — destination: ${dest.flag} ${dest.countryName} (${dest.region}, ${dest.currency})`, status: 'llm_call' });
 
   const determinations: DeterminationResult[] = [];
 
@@ -240,7 +247,7 @@ export async function determineHsCodesForPo(poId: string): Promise<DetermineResp
       chunk.map((li) => classifyOneItem(zai, li, po, pushStep)),
     );
     for (const r of chunkResults) {
-      await storeItemDeterminations(r, po, determinations, pushStep);
+      await storeItemDeterminations(r, po, determinations, pushStep, destRegion);
     }
   }
 
@@ -326,13 +333,14 @@ async function storeItemDeterminations(
   po: { originCountry: string | null },
   determinations: DeterminationResult[],
   pushStep: (s: Omit<AgentStep, 'step' | 'ts'>) => void,
+  destRegion: Region,
 ): Promise<void> {
   const { li, parsed, cands, error } = r;
   const fb = cands[0];
   const groundingRefs = cands.map((c) => c.id).join(',') || null;
   const out = parsed?.items.find((x) => x.lineItemId === li.id);
 
-  for (const region of ['US', 'UK', 'EU'] as Region[]) {
+  for (const region of [destRegion] as Region[]) {
     if (parsed && out) {
       const raw = out[region.toLowerCase() as 'us' | 'uk' | 'eu'];
       const fbRegional = fb
