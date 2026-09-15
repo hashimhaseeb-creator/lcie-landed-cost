@@ -127,3 +127,29 @@ Verification (Agent Browser):
 Stage Summary:
 - All four user-reported issues resolved: (1) PDF PO upload now works end-to-end; (2) theme now matches the real alpine-rcic.netlify.app brand (cyan/teal/cream + G(P)⁴ ring logo + Inter/Sora fonts); (3) logo is the actual G(P)⁴ 4-quadrant ring; (4) color scheme is the brand's cyan #22D3EE primary + green lens accents, not the generic emerald.
 - Bonus: Section 301 + IEEPA surcharges (explicitly mentioned on the reference site's Duty Stack Agent) are now modelled and visible in the US region card, per-line table, and charts.
+
+---
+Task ID: 7
+Agent: orchestrator (main)
+Task: Fix "Agent run failed" — the LLM call was taking ~2.1 minutes and exceeding the route's 120s maxDuration / client timeout.
+
+Root cause:
+- The agent made ONE batched LLM call classifying all 6 line items at once (large prompt with grounding JSON for every item + large JSON response). A single chat.completions.create call took 2.1 min in the failing run, breaching the 120s route max and the client fetch window → the browser showed "Agent run failed" via the catch block.
+- One slow/hung call also had no escape — it blocked the whole run.
+
+Fix (src/lib/lcie/agent.ts):
+- Replaced the single batched call with PARALLEL PER-ITEM LLM calls (concurrency 3). Each item gets its own small prompt (only its own grounding candidates) → much faster responses, and they run concurrently so wall-clock ≈ slowest single call, not the sum.
+- Added a withTimeout() helper that races each LLM call against a 45s hard deadline. If a call hangs or is slow, it fails fast and that ONE item falls back to knowledge-base grounding — the other items still succeed. The run can never be blocked by a single call.
+- Refactored into classifyOneItem() (grounding + timed LLM call + parse) and storeItemDeterminations() (LLM output if available, else KB fallback with Section 301/IEEPA defaults), orchestrated by a Promise.all loop over chunks of CONCURRENCY.
+- The live agent trace now shows per-item grounding/LLM/stored steps with line numbers (L1, L2, L3 …) timestamped to the same second, making the parallelism visible.
+
+Verification (Agent Browser, Mixed Retail sample, 6 CN-origin items):
+- POST /api/lcie/determine-codes 200 in 10.4s (was 2.1min) — 12× faster.
+- POST /api/lcie/calculate 200 in 29ms.
+- Total wall-clock to rendered dashboard: 16s (was timing out / failing).
+- Results intact: Section 301 surcharge $15,925, IEEPA reciprocal tariff $91,834, "Lowest effective rate: 🇪🇺 EU (23.34%)" badge, 14 HS codes shown, dashboard ready.
+- Agent trace: 21 steps, L1/L2/L3 grounding+LLM all timestamped 9:44:54 (concurrent).
+- No errors in dev.log. Lint clean.
+
+Stage Summary:
+- "Agent run failed" is resolved. The agent now runs in ~10–16s for a 6-line PO and degrades gracefully (KB fallback per item) if any single LLM call is slow or unavailable — it can no longer fail the whole run.

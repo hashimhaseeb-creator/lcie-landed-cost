@@ -22,6 +22,8 @@ import type { Region, AgentStep, DeterminationResult, DetermineResponse } from '
 
 const MODEL_TAG = 'glm-5.2 (z-ai-web-dev-sdk)';
 const BATCH_SIZE = 8;
+const CONCURRENCY = 3;        // parallel per-item LLM calls
+const LLM_TIMEOUT_MS = 45000; // per-call hard timeout — a hung call fails fast → KB fallback
 
 interface LlmRegionOutput {
   hsCode: string;
@@ -224,122 +226,21 @@ export async function determineHsCodesForPo(poId: string): Promise<DetermineResp
   await db.hsDetermination.deleteMany({ where: { lineItem: { poId } } });
 
   const zai = await ZAI.create();
-  pushStep({ lineItemId: '', description: `LCIE agent initialised (model=${MODEL_TAG})`, status: 'llm_call' });
+  pushStep({ lineItemId: '', description: `LCIE agent initialised (model=${MODEL_TAG}, ${po.lineItems.length} item(s), ${CONCURRENCY} parallel)`, status: 'llm_call' });
 
   const determinations: DeterminationResult[] = [];
-  const batches: typeof po.lineItems[] = [];
-  for (let i = 0; i < po.lineItems.length; i += BATCH_SIZE) {
-    batches.push(po.lineItems.slice(i, i + BATCH_SIZE));
-  }
 
-  for (const batch of batches) {
-    const ids = batch.map((b) => b.id);
-    const lineSummaries = batch.map((b) => `L${b.lineNumber}: ${b.description}`).join(', ');
-    pushStep({ lineItemId: ids[0] ?? '', description: `Grounding lookup for batch (${lineSummaries})`, status: 'grounding' });
-
-    const userPrompt = buildUserPrompt(
-      batch.map((b) => ({
-        id: b.id,
-        lineNumber: b.lineNumber,
-        description: b.description,
-        material: b.material,
-        quantity: b.quantity,
-        unit: b.unit,
-        unitValue: b.unitValue,
-        originCountry: b.originCountry ?? po.originCountry,
-      })),
+  // Process line items in parallel chunks of CONCURRENCY. Each item gets its
+  // own LLM call (small prompt → fast), bounded by LLM_TIMEOUT_MS so a hung
+  // call fails fast and falls back to knowledge-base grounding. This keeps
+  // wall-clock ~ slowest single call, not the sum of all calls.
+  for (let i = 0; i < po.lineItems.length; i += CONCURRENCY) {
+    const chunk = po.lineItems.slice(i, i + CONCURRENCY);
+    const chunkResults = await Promise.all(
+      chunk.map((li) => classifyOneItem(zai, li, po, pushStep)),
     );
-
-    pushStep({ lineItemId: ids[0] ?? '', description: `Invoking LLM for ${batch.length} line item(s)`, status: 'llm_call' });
-
-    let llmRaw = '';
-    let parsed: LlmBatchOutput | null = null;
-    try {
-      const completion = await zai.chat.completions.create({
-        messages: [
-          { role: 'assistant', content: SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt },
-        ],
-        thinking: { type: 'disabled' },
-      });
-      llmRaw = completion.choices[0]?.message?.content ?? '';
-      parsed = safeParseBatch(llmRaw);
-    } catch (err) {
-      pushStep({ lineItemId: ids[0] ?? '', description: `LLM call failed: ${(err as Error).message}`, status: 'error' });
-    }
-
-    if (!parsed) {
-      // fallback: synthesize determinations purely from KB grounding (degraded mode)
-      for (const li of batch) {
-        const cands = findHsEntries(li.description + ' ' + (li.material ?? ''));
-        const fb = cands[0];
-        for (const region of ['US', 'UK', 'EU'] as Region[]) {
-          const regional = fb ? (region === 'US' ? fb.us : region === 'UK' ? fb.uk : fb.eu) : null;
-          const det = await db.hsDetermination.create({
-            data: {
-              lineItemId: li.id,
-              region,
-              hsCode: regional?.code ?? '',
-              tariffDescription: regional?.description ?? 'LCIE fallback (no LLM parse)',
-              dutyRate: regional?.dutyRate ?? 0,
-              dutyType: regional?.dutyType ?? 'ad valorem',
-              vatRate: region === 'US' ? 0 : (region === 'UK' ? 0.2 : 0.19),
-              additionalLevies: region === 'US'
-                ? JSON.stringify({
-                    MPF: DUTY_RULES.US.mpfRate,
-                    HMF: DUTY_RULES.US.hmfRate,
-                    Section301: ((li.originCountry ?? po.originCountry ?? 'CN').toUpperCase() === 'CN' ? 0.25 : 0),
-                    IEEPA: ((li.originCountry ?? po.originCountry ?? 'CN').toUpperCase() === 'CN' ? 0.34 : 0),
-                  })
-                : null,
-              confidence: fb ? 0.6 : 0.3,
-              reasoning: fb ? `Fallback to KB entry "${fb.id}" (LLM parse failed).` : 'No grounding; LLM unavailable.',
-              groundingRefs: cands.map((c) => c.id).join(',') || null,
-            },
-          });
-          determinations.push(toDto(det, li));
-        }
-        pushStep({ lineItemId: li.id, description: `Stored fallback determinations (LLM parse failed)`, status: 'stored' });
-      }
-      continue;
-    }
-
-    pushStep({ lineItemId: ids[0] ?? '', description: `Parsed LLM JSON for ${parsed.items.length} item(s)`, status: 'parsing' });
-
-    for (const li of batch) {
-      const out = parsed.items.find((x) => x.lineItemId === li.id);
-      const cands = findHsEntries(li.description + ' ' + (li.material ?? ''));
-      const fb = cands[0];
-      const groundingRefs = cands.map((c) => c.id).join(',') || null;
-
-      for (const region of ['US', 'UK', 'EU'] as Region[]) {
-        const raw = out?.[region.toLowerCase() as 'us' | 'uk' | 'eu'];
-        const fbRegional = fb
-          ? region === 'US'
-            ? { code: fb.us.code, dutyRate: fb.us.dutyRate, dutyType: fb.us.dutyType, vatRate: 0, description: fb.us.description }
-            : region === 'UK'
-              ? { code: fb.uk.code, dutyRate: fb.uk.dutyRate, dutyType: fb.uk.dutyType, vatRate: fb.uk.vatRate, description: fb.uk.description }
-              : { code: fb.eu.code, dutyRate: fb.eu.dutyRate, dutyType: fb.eu.dutyType, vatRate: fb.eu.vatRate, description: fb.eu.description }
-          : undefined;
-        const sanitized = sanitizeRegion(raw, region, fbRegional, li.originCountry ?? po.originCountry);
-        const det = await db.hsDetermination.create({
-          data: {
-            lineItemId: li.id,
-            region,
-            hsCode: sanitized.hsCode,
-            tariffDescription: sanitized.tariffDescription,
-            dutyRate: sanitized.dutyRate,
-            dutyType: sanitized.dutyType,
-            vatRate: sanitized.vatRate,
-            additionalLevies: sanitized.additionalLevies ? JSON.stringify(sanitized.additionalLevies) : null,
-            confidence: sanitized.confidence,
-            reasoning: sanitized.reasoning,
-            groundingRefs,
-          },
-        });
-        determinations.push(toDto(det, li));
-      }
-      pushStep({ lineItemId: li.id, description: `Stored US/UK/EU determinations`, status: 'stored' });
+    for (const r of chunkResults) {
+      await storeItemDeterminations(r, po, determinations, pushStep);
     }
   }
 
@@ -352,6 +253,141 @@ export async function determineHsCodesForPo(poId: string): Promise<DetermineResp
     model: MODEL_TAG,
     durationMs,
   };
+}
+
+/** Race a promise against a hard timeout so one slow LLM call can't block the run. */
+function withTimeout<T>(p: Promise<T>, ms: number, label = 'LLM call'): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms),
+    ),
+  ]);
+}
+
+/** Classify a single line item across US/UK/EU via one LLM call (with grounding + timeout). */
+async function classifyOneItem(
+  zai: Awaited<ReturnType<typeof ZAI.create>>,
+  li: { id: string; lineNumber: number; description: string; material: string | null; quantity: number; unit: string | null; unitValue: number; originCountry: string | null },
+  po: { originCountry: string | null },
+  pushStep: (s: Omit<AgentStep, 'step' | 'ts'>) => void,
+): Promise<{
+  li: typeof li;
+  parsed: LlmBatchOutput | null;
+  cands: ReturnType<typeof findHsEntries>;
+  error?: string;
+}> {
+  const cands = findHsEntries(li.description + ' ' + (li.material ?? ''));
+  pushStep({ lineItemId: li.id, description: `L${li.lineNumber}: grounding → ${cands.length} candidate(s)`, status: 'grounding' });
+
+  const userPrompt = buildUserPrompt([
+    {
+      id: li.id,
+      lineNumber: li.lineNumber,
+      description: li.description,
+      material: li.material,
+      quantity: li.quantity,
+      unit: li.unit,
+      unitValue: li.unitValue,
+      originCountry: li.originCountry ?? po.originCountry,
+    },
+  ]);
+
+  pushStep({ lineItemId: li.id, description: `L${li.lineNumber}: invoking LLM`, status: 'llm_call' });
+
+  try {
+    const completion = await withTimeout(
+      zai.chat.completions.create({
+        messages: [
+          { role: 'assistant', content: SYSTEM_PROMPT },
+          { role: 'user', content: userPrompt },
+        ],
+        thinking: { type: 'disabled' },
+      }),
+      LLM_TIMEOUT_MS,
+      `L${li.lineNumber}`,
+    );
+    const llmRaw = completion.choices[0]?.message?.content ?? '';
+    const parsed = safeParseBatch(llmRaw);
+    if (!parsed) {
+      return { li, parsed: null, cands, error: 'LLM JSON parse failed' };
+    }
+    return { li, parsed, cands };
+  } catch (err) {
+    const msg = (err as Error).message;
+    pushStep({ lineItemId: li.id, description: `L${li.lineNumber}: LLM failed — ${msg}`, status: 'error' });
+    return { li, parsed: null, cands, error: msg };
+  }
+}
+
+/** Store the 3 region determinations for one line item — from LLM output if available, else KB fallback. */
+async function storeItemDeterminations(
+  r: { li: { id: string; lineNumber: number; description: string; material: string | null; originCountry: string | null }; parsed: LlmBatchOutput | null; cands: ReturnType<typeof findHsEntries>; error?: string },
+  po: { originCountry: string | null },
+  determinations: DeterminationResult[],
+  pushStep: (s: Omit<AgentStep, 'step' | 'ts'>) => void,
+): Promise<void> {
+  const { li, parsed, cands, error } = r;
+  const fb = cands[0];
+  const groundingRefs = cands.map((c) => c.id).join(',') || null;
+  const out = parsed?.items.find((x) => x.lineItemId === li.id);
+
+  for (const region of ['US', 'UK', 'EU'] as Region[]) {
+    if (parsed && out) {
+      const raw = out[region.toLowerCase() as 'us' | 'uk' | 'eu'];
+      const fbRegional = fb
+        ? region === 'US'
+          ? { code: fb.us.code, dutyRate: fb.us.dutyRate, dutyType: fb.us.dutyType, vatRate: 0, description: fb.us.description }
+          : region === 'UK'
+            ? { code: fb.uk.code, dutyRate: fb.uk.dutyRate, dutyType: fb.uk.dutyType, vatRate: fb.uk.vatRate, description: fb.uk.description }
+            : { code: fb.eu.code, dutyRate: fb.eu.dutyRate, dutyType: fb.eu.dutyType, vatRate: fb.eu.vatRate, description: fb.eu.description }
+        : undefined;
+      const sanitized = sanitizeRegion(raw, region, fbRegional, li.originCountry ?? po.originCountry);
+      const det = await db.hsDetermination.create({
+        data: {
+          lineItemId: li.id,
+          region,
+          hsCode: sanitized.hsCode,
+          tariffDescription: sanitized.tariffDescription,
+          dutyRate: sanitized.dutyRate,
+          dutyType: sanitized.dutyType,
+          vatRate: sanitized.vatRate,
+          additionalLevies: sanitized.additionalLevies ? JSON.stringify(sanitized.additionalLevies) : null,
+          confidence: sanitized.confidence,
+          reasoning: sanitized.reasoning,
+          groundingRefs,
+        },
+      });
+      determinations.push(toDto(det, li));
+    } else {
+      // Fallback: KB grounding only (LLM call failed or timed out)
+      const regional = fb ? (region === 'US' ? fb.us : region === 'UK' ? fb.uk : fb.eu) : null;
+      const det = await db.hsDetermination.create({
+        data: {
+          lineItemId: li.id,
+          region,
+          hsCode: regional?.code ?? '',
+          tariffDescription: regional?.description ?? 'LCIE fallback (no LLM parse)',
+          dutyRate: regional?.dutyRate ?? 0,
+          dutyType: regional?.dutyType ?? 'ad valorem',
+          vatRate: region === 'US' ? 0 : (region === 'UK' ? 0.2 : 0.19),
+          additionalLevies: region === 'US'
+            ? JSON.stringify({
+                MPF: DUTY_RULES.US.mpfRate,
+                HMF: DUTY_RULES.US.hmfRate,
+                Section301: ((li.originCountry ?? po.originCountry ?? 'CN').toUpperCase() === 'CN' ? 0.25 : 0),
+                IEEPA: ((li.originCountry ?? po.originCountry ?? 'CN').toUpperCase() === 'CN' ? 0.34 : 0),
+              })
+            : null,
+          confidence: fb ? 0.6 : 0.3,
+          reasoning: fb ? `Fallback to KB entry "${fb.id}" (${error ?? 'LLM unavailable'}).` : 'No grounding; LLM unavailable.',
+          groundingRefs,
+        },
+      });
+      determinations.push(toDto(det, li));
+    }
+  }
+  pushStep({ lineItemId: li.id, description: `L${li.lineNumber}: stored US/UK/EU determinations${error ? ' (with KB fallback)' : ''}`, status: 'stored' });
 }
 
 function toDto(
