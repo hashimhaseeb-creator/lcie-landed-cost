@@ -988,6 +988,90 @@ export const HS_KNOWLEDGE_BASE: HsCodeEntry[] = [
       ],
     },
   },
+
+  /* ---------- Water Filtration (HS 8421.21 — duty-free) ---------- */
+  {
+    id: 'water-filter-cartridge',
+    category: 'Water Filtration',
+    productKeywords: [
+      'water', 'filter', 'cartridge', 'sediment', 'carbon', 'carbon block',
+      'big blue', 'tier1', 'uswf', 'us water', 'prefilter', 'postfilter',
+      'p5', 'p1', 'p20', 'p25', 'p50', 'p10', 'ep5', 'ep10', 'epm',
+      'dgd1', 'dgd', 'gradient', 'pleated', 'string wound', '20bb', '10bb',
+      '20', '10', 'ro membrane', 'reverse osmosis', 'membrane',
+    ],
+    productDescription: 'Replaceable water filter cartridge — sediment, carbon block, dual-gradient, or RO membrane',
+    typicalMaterial: 'Spun polypropylene / activated carbon block / PES membrane',
+    us: {
+      code: '8421.21.00.00',
+      description: 'Filtering or purifying machinery and apparatus, for liquids, for filtering water (cartridge filter)',
+      dutyRate: 0,
+      dutyType: 'free',
+      specialNotes: 'Water filter cartridges are classified under 8421.21.00.00 (HTSUS). MFN/Column 1 rate is FREE. China-origin goods may be subject to Section 301 List 3 duty (25%) and IEEPA reciprocal tariff.',
+    },
+    uk: {
+      code: '8421.21.00.00',
+      description: 'Machinery and apparatus for filtering or purifying water',
+      dutyRate: 0,
+      dutyType: 'free',
+      vatRate: 0.2,
+    },
+    eu: {
+      code: '8421 21 00',
+      description: 'Filtering or purifying machinery and apparatus for water',
+      dutyRate: 0,
+      dutyType: 'free',
+      vatRate: 0.19,
+      memberStateVat: [
+        { country: 'Germany', rate: 0.19 },
+        { country: 'France', rate: 0.2 },
+        { country: 'Netherlands', rate: 0.21 },
+        { country: 'Italy', rate: 0.22 },
+        { country: 'Spain', rate: 0.21 },
+      ],
+    },
+  },
+  {
+    id: 'water-filter-housing-system',
+    category: 'Water Filtration',
+    productKeywords: [
+      'housing', 'kit', 'tank', 'bracket', 'system', 'installation',
+      'wh-prefilter', 'uswf-bt', 'uswf-ud', 'uswf-tk', 'under counter',
+      'under sink', 'point of use', 'point of entry', 'whole house',
+      'filter housing', 'filter kit', 'bracket', 'bw', 'rtb',
+      'reverse osmosis system', 'ro system', 'ro tank', 'storage tank',
+    ],
+    productDescription: 'Water filter housing, bracket, tank, or complete filtration system / kit',
+    typicalMaterial: 'Polypropylene housing / stainless steel bracket / FRP tank',
+    us: {
+      code: '8421.21.00.00',
+      description: 'Filtering or purifying machinery and apparatus, for liquids, for filtering water (housing/system)',
+      dutyRate: 0,
+      dutyType: 'free',
+      specialNotes: 'Water filter housings, tanks, brackets, and complete filtration systems are classified under 8421.21.00.00. MFN/Column 1 rate is FREE. Individual bare metal brackets may also be classified as parts under 8421.99.00.90 (also FREE).',
+    },
+    uk: {
+      code: '8421.21.00.00',
+      description: 'Machinery and apparatus for filtering or purifying water (housing/system)',
+      dutyRate: 0,
+      dutyType: 'free',
+      vatRate: 0.2,
+    },
+    eu: {
+      code: '8421 21 00',
+      description: 'Filtering or purifying machinery and apparatus for water (housing/system)',
+      dutyRate: 0,
+      dutyType: 'free',
+      vatRate: 0.19,
+      memberStateVat: [
+        { country: 'Germany', rate: 0.19 },
+        { country: 'France', rate: 0.2 },
+        { country: 'Netherlands', rate: 0.21 },
+        { country: 'Italy', rate: 0.22 },
+        { country: 'Spain', rate: 0.21 },
+      ],
+    },
+  },
 ];
 
 /* ------------------------------------------------------------------ *

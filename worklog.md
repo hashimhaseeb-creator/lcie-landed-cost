@@ -253,3 +253,24 @@ Verification (Agent Browser):
 
 Stage Summary:
 - The LCIE engine now computes the duty stack for ONLY the PO's final destination country, with live ECB FX conversion to the destination currency (US→USD, UK→GBP, EU→EUR/member), a detailed step-by-step duty-stack waterfall, and a fully editable landed-cost inputs form (8 import charge fields) that re-calculates instantly. Section 301 / IEEPA / MPF / HMF appear only when the destination is the US; VAT appears only for UK/EU at the destination country's rate.
+
+---
+Task ID: 11
+Agent: orchestrator (main)
+Task: Fix "what a mess" — water filters misclassified as Bluetooth (8517.12) / cotton shirts (6109.10) + footer overlapping the table.
+
+Root cause (confirmed via VLM on the screenshot):
+- The knowledge base had NO water-filtration products, so findHsEntries returned 0 candidates for every USWF-*/TIER1-*/WH-PREFILTER-* SKU. The LLM then classified blind and guessed wildly: "USWF-BT-70L-BK" → 8517.12.0030 (Bluetooth headphones — the "BT" token), "USWF-UD-N0801" → 6109.10.0030 (cotton shirts @ 16.5%). Many LLM calls also timed out → "LCIE fallback (no LLM parse)" with no code at all. Water filters belong under 8421.21.00.00 (water filtering apparatus, duty-free).
+- The per-line results table used radix <ScrollArea className="max-h-96"> which doesn't clip reliably (Viewport height:100% has no definite parent height) and can render duplicate content → footer visually overlapped rows 9-13.
+
+Fix:
+- src/lib/hs-knowledge-base.ts: added 2 Water Filtration entries to HS_KNOWLEDGE_BASE — 'water-filter-cartridge' and 'water-filter-housing-system', both HS 8421.21.00.00 (US), 8421.21.00.00 (UK), 8421 21 00 (EU CN8), duty FREE, with broad keywords (water, filter, cartridge, sediment, carbon block, big blue, tier1, uswf, us water, prefilter, postfilter, p5/p1/p20/p50/ep5/ep10/epm/dgd1, 20bb, 10bb, ro membrane, reverse osmosis, housing, kit, tank, bracket, system, wh-prefilter, uswf-bt/uswf-ud/uswf-tk, under counter/sink, whole house, ro system/tank). Verified findHsEntries now returns 8421.21.00.00 for every P00775 SKU.
+- src/app/page.tsx: replaced <ScrollArea className="max-h-96 lcie-scroll"> (per-line results table) with a plain <div className="max-h-[460px] overflow-y-auto lcie-scroll"> — reliable clipping, no duplicate render, no footer overlap.
+
+Verification (Agent Browser + VLM):
+- Uploaded the real P00775 PDF, ran the agent (56s). All 26 water-filter items classified to 8421.21.00.00 (duty-free). No 8517 / no 6109 / no Bluetooth / no shirts anywhere. Even LLM-timed-out items get the correct 8421.21 code via KB fallback (lower confidence, correct code).
+- Layout: per-line table now clips to 460px (scrollHeight 1345, clientHeight 460, clips:true) with a scrollbar; footer at y=3796, table at y=1114 — no overlap. VLM confirms: "The layout is clean; the footer is not overlapping any table rows. The HS code shown is 8421.21.00.00. No misclassified items; all line items are correctly classified as water-filter machinery (HS 8421)."
+- Lint clean. No runtime errors.
+
+Stage Summary:
+- Water-filtration products are now grounded in the KB (HS 8421.21.00.00, duty-free), so USWF/TIER1/WH-PREFILTER SKUs classify correctly instead of bleeding into 8517 (Bluetooth) or 6109 (apparel). The per-line table clips properly so the footer no longer overlaps. The KB fallback guarantees the correct code even when an LLM call times out.

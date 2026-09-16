@@ -541,7 +541,7 @@ function ResultsDashboard({
           <CardDescription>What the LCIE agent classified for every line — HS code, duty rate, Section 301 / IEEPA (US only), VAT, and reasoning, all in {c.currency}.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          <ScrollArea className="max-h-96 lcie-scroll">
+          <div className="max-h-[460px] overflow-y-auto lcie-scroll">
             <Table>
               <TableHeader className="sticky top-0 bg-muted/40 backdrop-blur z-10">
                 <TableRow>
@@ -570,7 +570,7 @@ function ResultsDashboard({
                 ))}
               </TableBody>
             </Table>
-          </ScrollArea>
+          </div>
         </CardContent>
       </Card>
     </motion.div>
