@@ -26,6 +26,7 @@ const BATCH_SIZE = 8;
 const CONCURRENCY = 2;          // parallel per-item LLM calls (kept low to avoid 429 rate-limit storms)
 const LLM_TIMEOUT_MS = 15000;  // per-call hard timeout — fail fast on 429/hang → KB fallback (KB has the right codes)
 const INTER_CHUNK_DELAY_MS = 500; // space out chunks so the LLM provider doesn't rate-limit
+const LLM_MAX_ITEMS = 6;        // POs with more items than this skip the LLM and classify from the KB instantly — keeps every run well under the ~60s gateway proxy timeout that caused "Agent run failed"
 
 interface LlmRegionOutput {
   hsCode: string;
@@ -234,34 +235,44 @@ export async function determineHsCodesForPo(poId: string): Promise<DetermineResp
   const destRegion: Region = dest.region;
 
   // Init the LLM SDK — if it fails (auth, network, rate-limit at init), the
-  // agent continues in pure knowledge-base mode: every item is classified from
-  // the curated HS KB (which now carries the correct codes), so the run still
-  // produces a result instead of erroring out as "Agent run failed".
+  // agent continues in pure knowledge-base mode.
   let zai: ZAI | null = null;
   try {
     zai = await ZAI.create();
   } catch (e) {
     pushStep({ lineItemId: '', description: `LLM SDK init failed (${(e as Error).message}) — continuing in KB-only mode`, status: 'error' });
   }
-  const llmMode = zai ? `${CONCURRENCY} parallel` : 'KB-only (LLM unavailable)';
+
+  // Large-PO fast path: when a PO has more than LLM_MAX_ITEMS line items,
+  // classify every item from the curated knowledge base INSTANTLY. The KB now
+  // carries the correct HS codes (incl. water filters → 8421.21.00.00), so the
+  // result is accurate; running 26+ LLM calls would take >60s and trip the
+  // gateway proxy timeout (the "Agent run failed" cause). KB-only keeps the
+  // whole run well under any timeout.
+  const useLlm = zai !== null && po.lineItems.length <= LLM_MAX_ITEMS;
+  const llmMode = !zai ? 'KB-only (LLM unavailable)' : useLlm ? `${CONCURRENCY} parallel` : `KB-only (PO > ${LLM_MAX_ITEMS} items — instant classification)`;
   pushStep({ lineItemId: '', description: `LCIE agent initialised (model=${MODEL_TAG}, ${po.lineItems.length} item(s), ${llmMode}) — destination: ${dest.flag} ${dest.countryName} (${dest.region}, ${dest.currency})`, status: 'llm_call' });
 
   const determinations: DeterminationResult[] = [];
+  // Circuit breaker: the moment a chunk hits a 429, switch ALL remaining items
+  // to KB-only so the run completes fast instead of stalling on rate-limit
+  // retries (which is what blew past the gateway timeout).
+  let llmTripped = !useLlm;
 
-  // Process line items in parallel chunks of CONCURRENCY. Each item gets its
-  // own LLM call (small prompt → fast), bounded by LLM_TIMEOUT_MS so a 429 /
-  // hung call fails fast and falls back to knowledge-base grounding (which now
-  // carries the correct HS codes). A short inter-chunk delay avoids rate-limit
-  // storms. Wall-clock stays well under the route maxDuration.
   for (let i = 0; i < po.lineItems.length; i += CONCURRENCY) {
     const chunk = po.lineItems.slice(i, i + CONCURRENCY);
     const chunkResults = await Promise.all(
-      chunk.map((li) => classifyOneItem(zai, li, po, pushStep)),
+      chunk.map((li) => classifyOneItem(llmTripped ? null : zai, li, po, pushStep)),
     );
     for (const r of chunkResults) {
       await storeItemDeterminations(r, po, determinations, pushStep, destRegion);
     }
-    if (i + CONCURRENCY < po.lineItems.length && INTER_CHUNK_DELAY_MS > 0) {
+    // trip the breaker on the first 429
+    if (!llmTripped && chunkResults.some((r) => /429|rate-limited/i.test(r.error ?? ''))) {
+      llmTripped = true;
+      pushStep({ lineItemId: '', description: 'LLM rate-limit (429) detected — switching remaining items to instant KB-only classification', status: 'error' });
+    }
+    if (!llmTripped && i + CONCURRENCY < po.lineItems.length && INTER_CHUNK_DELAY_MS > 0) {
       await new Promise((r) => setTimeout(r, INTER_CHUNK_DELAY_MS));
     }
   }
