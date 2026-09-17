@@ -15,7 +15,7 @@ import { determineHsCodesForPo } from '@/lib/lcie/agent';
 import type { ApiError, DetermineResponse } from '@/lib/lcie/types';
 
 export const runtime = 'nodejs';
-export const maxDuration = 120;
+export const maxDuration = 180;
 
 export async function POST(req: NextRequest) {
   try {

@@ -23,8 +23,9 @@ import type { Region, AgentStep, DeterminationResult, DetermineResponse } from '
 
 const MODEL_TAG = 'glm-5.2 (z-ai-web-dev-sdk)';
 const BATCH_SIZE = 8;
-const CONCURRENCY = 3;        // parallel per-item LLM calls
-const LLM_TIMEOUT_MS = 45000; // per-call hard timeout — a hung call fails fast → KB fallback
+const CONCURRENCY = 2;          // parallel per-item LLM calls (kept low to avoid 429 rate-limit storms)
+const LLM_TIMEOUT_MS = 15000;  // per-call hard timeout — fail fast on 429/hang → KB fallback (KB has the right codes)
+const INTER_CHUNK_DELAY_MS = 500; // space out chunks so the LLM provider doesn't rate-limit
 
 interface LlmRegionOutput {
   hsCode: string;
@@ -232,15 +233,26 @@ export async function determineHsCodesForPo(poId: string): Promise<DetermineResp
   const dest = resolveDestination(po.destinationCountry);
   const destRegion: Region = dest.region;
 
-  const zai = await ZAI.create();
-  pushStep({ lineItemId: '', description: `LCIE agent initialised (model=${MODEL_TAG}, ${po.lineItems.length} item(s), ${CONCURRENCY} parallel) — destination: ${dest.flag} ${dest.countryName} (${dest.region}, ${dest.currency})`, status: 'llm_call' });
+  // Init the LLM SDK — if it fails (auth, network, rate-limit at init), the
+  // agent continues in pure knowledge-base mode: every item is classified from
+  // the curated HS KB (which now carries the correct codes), so the run still
+  // produces a result instead of erroring out as "Agent run failed".
+  let zai: ZAI | null = null;
+  try {
+    zai = await ZAI.create();
+  } catch (e) {
+    pushStep({ lineItemId: '', description: `LLM SDK init failed (${(e as Error).message}) — continuing in KB-only mode`, status: 'error' });
+  }
+  const llmMode = zai ? `${CONCURRENCY} parallel` : 'KB-only (LLM unavailable)';
+  pushStep({ lineItemId: '', description: `LCIE agent initialised (model=${MODEL_TAG}, ${po.lineItems.length} item(s), ${llmMode}) — destination: ${dest.flag} ${dest.countryName} (${dest.region}, ${dest.currency})`, status: 'llm_call' });
 
   const determinations: DeterminationResult[] = [];
 
   // Process line items in parallel chunks of CONCURRENCY. Each item gets its
-  // own LLM call (small prompt → fast), bounded by LLM_TIMEOUT_MS so a hung
-  // call fails fast and falls back to knowledge-base grounding. This keeps
-  // wall-clock ~ slowest single call, not the sum of all calls.
+  // own LLM call (small prompt → fast), bounded by LLM_TIMEOUT_MS so a 429 /
+  // hung call fails fast and falls back to knowledge-base grounding (which now
+  // carries the correct HS codes). A short inter-chunk delay avoids rate-limit
+  // storms. Wall-clock stays well under the route maxDuration.
   for (let i = 0; i < po.lineItems.length; i += CONCURRENCY) {
     const chunk = po.lineItems.slice(i, i + CONCURRENCY);
     const chunkResults = await Promise.all(
@@ -248,6 +260,9 @@ export async function determineHsCodesForPo(poId: string): Promise<DetermineResp
     );
     for (const r of chunkResults) {
       await storeItemDeterminations(r, po, determinations, pushStep, destRegion);
+    }
+    if (i + CONCURRENCY < po.lineItems.length && INTER_CHUNK_DELAY_MS > 0) {
+      await new Promise((r) => setTimeout(r, INTER_CHUNK_DELAY_MS));
     }
   }
 
@@ -272,9 +287,12 @@ function withTimeout<T>(p: Promise<T>, ms: number, label = 'LLM call'): Promise<
   ]);
 }
 
-/** Classify a single line item across US/UK/EU via one LLM call (with grounding + timeout). */
+/** Classify a single line item via one LLM call (with grounding + timeout).
+ *  Falls back to KB-only classification if `zai` is null (SDK init failed) or
+ *  the call times out / hits a 429 rate limit — the KB now carries the correct
+ *  HS codes so the fallback is still accurate, just lower confidence. */
 async function classifyOneItem(
-  zai: Awaited<ReturnType<typeof ZAI.create>>,
+  zai: Awaited<ReturnType<typeof ZAI.create>> | null,
   li: { id: string; lineNumber: number; description: string; material: string | null; quantity: number; unit: string | null; unitValue: number; originCountry: string | null },
   po: { originCountry: string | null },
   pushStep: (s: Omit<AgentStep, 'step' | 'ts'>) => void,
@@ -286,6 +304,12 @@ async function classifyOneItem(
 }> {
   const cands = findHsEntries(li.description + ' ' + (li.material ?? ''));
   pushStep({ lineItemId: li.id, description: `L${li.lineNumber}: grounding → ${cands.length} candidate(s)`, status: 'grounding' });
+
+  // KB-only fast path when the LLM SDK is unavailable (init failed / 429 storm).
+  if (!zai) {
+    pushStep({ lineItemId: li.id, description: `L${li.lineNumber}: LLM unavailable → KB-only classification`, status: 'stored' });
+    return { li, parsed: null, cands, error: 'LLM unavailable (KB-only)' };
+  }
 
   const userPrompt = buildUserPrompt([
     {
@@ -321,9 +345,10 @@ async function classifyOneItem(
     }
     return { li, parsed, cands };
   } catch (err) {
-    const msg = (err as Error).message;
-    pushStep({ lineItemId: li.id, description: `L${li.lineNumber}: LLM failed — ${msg}`, status: 'error' });
-    return { li, parsed: null, cands, error: msg };
+    const msg = (err as Error).message || String(err);
+    const is429 = /429|too many requests|rate limit/i.test(msg);
+    pushStep({ lineItemId: li.id, description: `L${li.lineNumber}: ${is429 ? 'LLM rate-limited (429)' : 'LLM failed'} — falling back to KB`, status: 'error' });
+    return { li, parsed: null, cands, error: is429 ? 'LLM rate-limited (429) → KB fallback' : msg };
   }
 }
 

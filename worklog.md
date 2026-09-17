@@ -274,3 +274,29 @@ Verification (Agent Browser + VLM):
 
 Stage Summary:
 - Water-filtration products are now grounded in the KB (HS 8421.21.00.00, duty-free), so USWF/TIER1/WH-PREFILTER SKUs classify correctly instead of bleeding into 8517 (Bluetooth) or 6109 (apparel). The per-line table clips properly so the footer no longer overlaps. The KB fallback guarantees the correct code even when an LLM call times out.
+
+---
+Task ID: 12
+Agent: orchestrator (main)
+Task: Answer "Why?" — the screenshot showed "⚠️ Agent run failed" with empty landed-cost inputs.
+
+Root cause (from dev.log):
+- A storm of "API request failed with status 429: Too many requests" errors from the z-ai LLM provider. The agent was firing 3 parallel LLM calls per chunk × 9 chunks (26-item PO) = 27 rapid calls, tripping the rate limit. When the SDK retried 429s slowly, the run exceeded the route's 120s maxDuration → the fetch timed out → "Agent run failed" red banner. (The "all-zeros" landed-cost inputs in the screenshot were just empty fields — the PO had no freight — not the cause.)
+
+Fix — make the agent resilient to LLM rate-limiting so it NEVER fails the whole run:
+- src/lib/lcie/agent.ts:
+  - CONCURRENCY 3 → 2 (fewer simultaneous calls → fewer 429s).
+  - LLM_TIMEOUT_MS 45000 → 15000 (fail fast on 429/hang → KB fallback).
+  - INTER_CHUNK_DELAY_MS = 500 (space out chunks so the provider doesn't rate-limit).
+  - ZAI.create() wrapped in try/catch → if SDK init fails, the agent continues in pure KB-only mode (every item classified from the curated HS KB) instead of throwing "Agent run failed".
+  - classifyOneItem now accepts zai: … | null; KB-only fast path when zai is null.
+  - 429 detection in the catch (regex /429|too many requests|rate limit/i) → immediate KB fallback, logged as "LLM rate-limited (429) — falling back to KB". The KB now carries the correct water-filter codes (8421.21.00.00), so the fallback is still accurate, just lower confidence.
+- src/app/api/lcie/determine-codes/route.ts: maxDuration 120 → 180 (room for 26-item runs with the inter-chunk delay).
+
+Verification (Agent Browser, the real P00775 PDF):
+- Agent SUCCEEDED in 101s (was failing). 429s still occurring (rateLimited:true) but every 429'd item fell back to the KB → correct 8421.21.00.00 code. agentFailed:false — no more "Agent run failed".
+- All 26 water filters classified to 8421.21.00.00 (no 8517, no 6109). Total $45,669.32, effective 51.78% (CN-origin → §301 + IEEPA).
+- Lint clean. No runtime errors.
+
+Stage Summary:
+- "Why did the agent fail?" → the LLM provider rate-limited (429) the 27 rapid parallel calls and the run exceeded the route timeout. Now the agent fails fast on 429s, falls back to the curated knowledge base (correct codes), reduces parallelism, spaces out calls, and bumps the route timeout to 180s — so it produces a correct result instead of erroring.
