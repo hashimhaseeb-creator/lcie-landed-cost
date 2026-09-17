@@ -325,3 +325,35 @@ Verification (Agent Browser):
 
 Stage Summary:
 - "It failed again" is resolved. The root cause was the 96s runtime exceeding the gateway proxy timeout. The agent now classifies large POs (>6 items) instantly from the curated KB (which has the correct codes), and uses the LLM only for small POs (≤6) with a circuit breaker that trips to KB-only on the first 429 — so no run can exceed the proxy timeout or show "Agent run failed".
+
+---
+Task ID: 14
+Agent: orchestrator (main)
+Task: Compare the LCIE landed-cost outcome with a real CBP Form 7501 customs entry (H42-0214088-9, water filters) — duty structure + other charges.
+
+Diagnosis (from the real entry PDF):
+- The real 2025 CBP entry stacks THREE Chapter-99 provisions additively on the FREE base HTS, plus MPF, NO HMF (rail mode):
+    9903.88.01/.03 — China 25% reciprocal
+    9903.01.24 — CN/HK EO additional 20%
+    9903.01.25 — any-country reciprocal 10%  (applies to ANY country, not just China)
+    MPF 0.3464%
+    (HMF 0.125% — ocean only; this entry is rail → not assessed)
+  Effective = 25%+20%+10% = 55%. Grand total $43,358.37 on $78,340 entered value.
+- My LCIE engine was using the LEGACY model: "Section 301 25%" + "IEEPA 34%" (59%) + HMF always (assumed ocean). This DIVERGED from the real entry (over-stated by ~4pts + wrongly applied HMF for rail).
+
+Fix — aligned the US duty model to the real 2025 CBP Chapter-99 structure:
+- types.ts: added chinaReciprocalRate/cnhkEoRate/anyCountryRate (+ amounts/totals) to LineBreakdown & RegionCalculation; added hmfApplies + modeOfTransport; added CbpEntry/CbpEntryLine/CbpEntryProvision types; added modeOfTransport to LandedCostInputs. Kept section301*/ieepa* as back-compat aliases.
+- calculator.ts: parses ChinaReciprocal/CNHKEO/AnyCountry from the determination's additionalLevies; computes 9903.88.01 (25%, CN-only), 9903.01.24 (20%, CN-only), 9903.01.25 (10%, any country) additively on FOB; HMF conditional on modeOfTransport (ocean only); waterfall shows the 3 real provisions + MPF + (no-)HMF note; persists the new fields.
+- agent.ts: system prompt + sanitizer + KB-fallback now produce the 3 real Chapter-99 provisions (ChinaReciprocal/CNHKEO/AnyCountry) with the correct rates (25%/20%/10%) and origin logic; legacy Section301/IEEPA keys mapped for back-compat.
+- src/lib/lcie/cbp-entry-parser.ts (new): parses a CBP Form 7501 duty-stack PDF → {entryNumber, port, mode, origin, enteredValue, grandTotal, effectiveDutyPct, hmfAssessed, lines:[{hts, provisions:[{code,rate,amount}], lineTotal}]}. Verified on the real entry: H42-0214088-9, Pembina ND, Rail, CN, entered $78,340, grand total $43,358.37 (exact), 55%, no HMF, 2 lines with 9903.88.01/.03 25% + 9903.01.24 20% + 9903.01.25 10% + MPF — all captured correctly.
+- POST /api/lcie/compare-entry (new): accepts the 7501 PDF, unpdf-extracts, parses, returns CbpEntry.
+- page.tsx: per-line table columns changed §301/IEEPA → 9903.88 / 9903.01.24 / 9903.01.25; added a mode-of-transport selector (Ocean/Rail/Air/Truck) to the landed-cost form (drives HMF); added CbpComparisonPanel — a side-by-side duty-stack table (LCIE modelled vs CBP filed) with Match / Rate✓ / Diff badges + reconciliation notes (effective-rate delta, HMF consistency, shipment-value caveat); RegionCard description updated to the real provisions.
+
+Verification (Agent Browser + VLM):
+- Uploaded P00775 (US dest, CN-origin water filters), set mode=Rail, ran the agent (3s, KB-only). Loaded the CBP entry H42-0214088-9 into the comparison panel.
+- Side-by-side: every provision shows green "Rate ✓" — 9903.88.01 China 25%, 9903.01.24 CN/HK 20%, 9903.01.25 any-country 10%, MPF 0.3464% all match the CBP entry's rates exactly. HMF → n/a (both: no HMF for rail). Effective rate: LCIE 55.35% vs CBP 55.00% (the 0.35pt diff = MPF included in LCIE's effective). Grand totals differ ($46,741.59 vs $43,358.37) because the PO ($30,088 FOB) and the CBP entry ($78,340 entered) are different shipments — the rate-stack is the apples-to-apples comparison, explained in the reconciliation notes.
+- VLM confirms: side-by-side table present, all Chapter-99 provisions + MPF show green "Rate ✓" badges, HMF shown as not assessed (rail).
+- Lint clean. No runtime errors.
+
+Stage Summary:
+- The LCIE engine's US duty model now mirrors the real 2025 CBP Chapter-99 structure (9903.88.01 China 25% + 9903.01.24 CN/HK 20% + 9903.01.25 any-country 10% + MPF, with HMF conditional on ocean mode). The new CBP entry comparison panel validates the modelled duty stack against a filed Form 7501 side-by-side, with Match/Rate✓/Diff badges and reconciliation notes — confirming the engine matches the actual customs entry's duty structure.

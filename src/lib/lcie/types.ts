@@ -95,15 +95,21 @@ export interface LineBreakdown {
   dutyRate: number;
   dutyType: string;
   vatRate: number;
-  section301Rate: number;
-  ieepaRate: number;
+  section301Rate: number;   // kept for backward-compat alias = chinaReciprocalRate
+  ieepaRate: number;        // kept for backward-compat alias = cnhkEoRate + anyCountryRate
+  chinaReciprocalRate: number;   // 9903.88.01/.03 — China 25% reciprocal (2025 EO)
+  cnhkEoRate: number;            // 9903.01.24 — CN/HK EO additional 20%
+  anyCountryRate: number;        // 9903.01.25 — Reciprocal 10% (any country)
   confidence: number;
   reasoning?: string;
   fobValue: number;        // in destination currency
   cifValue: number;        // FOB + allocated freight/insurance/other
   duty: number;
-  section301: number;
-  ieepa: number;
+  section301: number;        // alias = chinaReciprocal (kept for UI back-compat)
+  ieepa: number;             // alias = cnhkEo + anyCountry (kept for UI back-compat)
+  chinaReciprocal: number;     // 9903.88.01/.03 — China 25%
+  cnhkEo: number;              // 9903.01.24 — CN/HK 20%
+  anyCountry: number;          // 9903.01.25 — any-country 10%
   vat: number;
   mpf: number;
   hmf: number;
@@ -127,11 +133,16 @@ export interface RegionCalculation {
   currency: string;        // destination currency (post-FX)
   subtotal: number;        // FOB subtotal in destination currency
   dutyTotal: number;
-  section301Total: number;
-  ieepaTotal: number;
+  section301Total: number;   // alias = chinaReciprocalTotal (back-compat)
+  ieepaTotal: number;        // alias = cnhkEoTotal + anyCountryTotal (back-compat)
+  chinaReciprocalTotal: number;   // 9903.88.01/.03 — China 25%
+  cnhkEoTotal: number;          // 9903.01.24 — CN/HK 20%
+  anyCountryTotal: number;      // 9903.01.25 — any-country 10%
   vatTotal: number;
   mpfTotal: number;
   hmfTotal: number;
+  hmfApplies: boolean;          // false for rail/air/truck (HMF is ocean-only under 19 U.S.C. §4462)
+  modeOfTransport?: string;     // 'Ocean' | 'Rail' | 'Air' | 'Truck'
   otherLevies: number;
   freight: number;
   insurance: number;
@@ -155,6 +166,35 @@ export interface LandedCostInputs {
   inlandDestinationDelivery?: number;
   currency?: string;            // currency the above are quoted in (defaults to PO currency)
   incoterm?: string;
+  modeOfTransport?: string;    // 'Ocean' | 'Rail' | 'Air' | 'Truck' — HMF applies only to Ocean
+}
+
+/** Parsed CBP Form 7501 customs entry, for side-by-side comparison. */
+export interface CbpEntryProvision {
+  code: string;                 // e.g. "9903.88.01", "MPF", "Base"
+  description: string;          // provision description
+  rate: number;                 // decimal (0.25 = 25%); MPF 0.003464
+  amount: number;               // USD duty/fee for this provision
+}
+export interface CbpEntryLine {
+  lineNumber: number;
+  hts: string;                  // base HTS (e.g. "8421.21.0000")
+  description: string;
+  enteredValue: number;
+  provisions: CbpEntryProvision[];
+  lineTotal: number;            // stacked duty + MPF for this line
+}
+export interface CbpEntry {
+  entryNumber?: string;
+  port?: string;
+  modeOfTransport?: string;
+  countryOfOrigin?: string;
+  enteredValue: number;
+  grandTotal: number;
+  effectiveDutyPct: number;
+  hmfAssessed: boolean;
+  lines: CbpEntryLine[];
+  rawText?: string;
 }
 
 export interface FxInfo {

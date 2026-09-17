@@ -22,7 +22,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Gp4Logo } from '@/components/gp4-logo';
 import { DutyCharts } from '@/components/lcie/duty-charts';
-import type { PoDto, DetermineResponse, CalculateResponse, DeterminationResult, AgentStep, LandedCostInputs } from '@/lib/lcie/types';
+import type { PoDto, DetermineResponse, CalculateResponse, DeterminationResult, AgentStep, LandedCostInputs, CbpEntry } from '@/lib/lcie/types';
 import { toast } from 'sonner';
 
 const BRAND = 'Green G(P)\u2074\u2122';
@@ -56,6 +56,9 @@ export default function Home() {
   const [samples, setSamples] = useState<SampleSummary[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [inputs, setInputs] = useState<LandedCostInputs>({});
+  const [cbpEntry, setCbpEntry] = useState<CbpEntry | null>(null);
+  const [cbpLoading, setCbpLoading] = useState(false);
+  const cbpInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const { theme, setTheme } = useTheme();
@@ -192,6 +195,19 @@ export default function Home() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Re-calculate failed'); toast.error('Re-calculate failed'); }
     finally { setCalcLoading(false); }
   }, [po, inputs]);
+
+  const handleCompareEntry = useCallback(async (file: File) => {
+    setCbpLoading(true);
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const r = await fetch('/api/lcie/compare-entry', { method: 'POST', body: fd });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail ?? e.error ?? 'CBP parse failed'); }
+      const entry: CbpEntry = await r.json();
+      setCbpEntry(entry);
+      toast.success(`CBP entry ${entry.entryNumber ?? ''} parsed — ${entry.lines.length} line(s), $${entry.grandTotal.toLocaleString()} grand total`);
+    } catch (e) { toast.error('CBP entry parse failed'); setError(e instanceof Error ? e.message : 'CBP parse failed'); }
+    finally { setCbpLoading(false); }
+  }, []);
 
   const downloadReport = () => {
     if (!po || !agentResult || !calcResult) return;
@@ -389,7 +405,17 @@ export default function Home() {
 
           {/* Results */}
           {calcResult && agentResult && (
-            <ResultsDashboard calc={calcResult} determinations={agentResult.determinations} onDownload={downloadReport} inputs={inputs} inputCur={inputCur} />
+            <ResultsDashboard
+              calc={calcResult}
+              determinations={agentResult.determinations}
+              onDownload={downloadReport}
+              inputs={inputs}
+              inputCur={inputCur}
+              cbpEntry={cbpEntry}
+              onCompareEntry={handleCompareEntry}
+              cbpLoading={cbpLoading}
+              cbpInputRef={cbpInputRef}
+            />
           )}
 
           {error && po && (<div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm"><AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" /><p className="text-destructive">{error}</p></div>)}
@@ -470,6 +496,22 @@ function LandedCostInputsForm({
             </div>
           ))}
         </div>
+
+        {/* Mode of transport — drives whether HMF (0.125%) is assessed (ocean only, 19 U.S.C. §4462) */}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Label className="text-xs flex items-center gap-1 text-muted-foreground"><Truck className="h-3 w-3" /> Mode of transport:</Label>
+          {['Ocean', 'Rail', 'Air', 'Truck'].map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setInputs({ ...inputs, modeOfTransport: mode })}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${(inputs.modeOfTransport ?? 'Ocean') === mode ? 'bg-cyan-600 text-white' : 'bg-muted text-muted-foreground hover:bg-cyan-50/60 dark:hover:bg-cyan-950/30'}`}
+            >
+              {mode}
+            </button>
+          ))}
+          <span className="text-[11px] text-muted-foreground ml-1">HMF (0.125%) applies only to Ocean — Rail/Air/Truck = no HMF.</span>
+        </div>
       </CardContent>
       <CardFooter className="border-t bg-muted/30 p-4 flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">All amounts in <strong className="text-foreground">{currency}</strong>. FX-converted to the destination currency on calculate.</p>
@@ -487,9 +529,12 @@ function LandedCostInputsForm({
 
 function ResultsDashboard({
   calc, determinations, onDownload, inputs, inputCur,
+  cbpEntry, onCompareEntry, cbpLoading, cbpInputRef,
 }: {
   calc: CalculateResponse; determinations: DeterminationResult[];
   onDownload: () => void; inputs: LandedCostInputs; inputCur: string;
+  cbpEntry: CbpEntry | null; onCompareEntry: (f: File) => void; cbpLoading: boolean;
+  cbpInputRef: React.RefObject<HTMLInputElement | null>;
 }) {
   const c = calc.calculation;
   if (!c) return null;
@@ -547,8 +592,9 @@ function ResultsDashboard({
                 <TableRow>
                   <TableHead className="w-10">#</TableHead><TableHead className="min-w-[180px]">Item</TableHead><TableHead className="w-32">HS code</TableHead>
                   <TableHead className="text-right w-20">Duty</TableHead>
-                  {c.region === 'US' && <TableHead className="text-right w-20">§301</TableHead>}
-                  {c.region === 'US' && <TableHead className="text-right w-20">IEEPA</TableHead>}
+                  {c.region === 'US' && <TableHead className="text-right w-20">9903.88</TableHead>}
+                  {c.region === 'US' && <TableHead className="text-right w-20">9903.01.24</TableHead>}
+                  {c.region === 'US' && <TableHead className="text-right w-20">9903.01.25</TableHead>}
                   {c.region !== 'US' && <TableHead className="text-right w-20">VAT</TableHead>}
                   <TableHead className="text-right w-24">Line total</TableHead><TableHead className="w-20">Conf.</TableHead><TableHead className="min-w-[240px]">Reasoning</TableHead>
                 </TableRow>
@@ -560,8 +606,9 @@ function ResultsDashboard({
                     <TableCell><p className="text-sm font-medium leading-tight">{lb.description}</p><p className="text-[11px] text-muted-foreground">{lb.tariffDescription}</p></TableCell>
                     <TableCell className="font-mono text-xs">{lb.hsCode || '—'}</TableCell>
                     <TableCell className="text-right font-mono text-xs">{lb.dutyType === 'free' ? 'Free' : fmtPct(lb.dutyRate)}</TableCell>
-                    {c.region === 'US' && <TableCell className="text-right font-mono text-xs text-violet-600 dark:text-violet-400">{fmtPct(lb.section301Rate)}</TableCell>}
-                    {c.region === 'US' && <TableCell className="text-right font-mono text-xs text-pink-600 dark:text-pink-400">{fmtPct(lb.ieepaRate)}</TableCell>}
+                    {c.region === 'US' && <TableCell className="text-right font-mono text-xs text-violet-600 dark:text-violet-400">{fmtPct(lb.chinaReciprocalRate)}</TableCell>}
+                    {c.region === 'US' && <TableCell className="text-right font-mono text-xs text-fuchsia-600 dark:text-fuchsia-400">{fmtPct(lb.cnhkEoRate)}</TableCell>}
+                    {c.region === 'US' && <TableCell className="text-right font-mono text-xs text-amber-600 dark:text-amber-400">{fmtPct(lb.anyCountryRate)}</TableCell>}
                     {c.region !== 'US' && <TableCell className="text-right font-mono text-xs">{fmtPct(lb.vatRate)}</TableCell>}
                     <TableCell className="text-right font-mono text-xs font-medium">{fmtMoney(lb.lineLandedCost, c.currency)}</TableCell>
                     <TableCell><div className="flex items-center gap-1.5"><Progress value={lb.confidence * 100} className="h-1.5 w-10 [&>div]:bg-cyan-500" /><span className="text-[10px] text-muted-foreground">{Math.round(lb.confidence * 100)}%</span></div></TableCell>
@@ -573,8 +620,188 @@ function ResultsDashboard({
           </div>
         </CardContent>
       </Card>
+
+      {/* CBP entry comparison (ground truth vs modelled) */}
+      <CbpComparisonPanel calc={c} cbpEntry={cbpEntry} onCompareEntry={onCompareEntry} cbpLoading={cbpLoading} cbpInputRef={cbpInputRef} />
     </motion.div>
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* CBP entry comparison panel                                          */
+/* ------------------------------------------------------------------ */
+
+function CbpComparisonPanel({
+  calc, cbpEntry, onCompareEntry, cbpLoading, cbpInputRef,
+}: {
+  calc: CalculateResponse['calculation'];
+  cbpEntry: CbpEntry | null;
+  onCompareEntry: (f: File) => void;
+  cbpLoading: boolean;
+  cbpInputRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  if (!calc) return null;
+  // build the LCIE engine's duty stack summary (only meaningful for US — CBP Form 7501 is US)
+  if (calc.region !== 'US') {
+    return (
+      <Card className="border-cyan-200/60 dark:border-cyan-900/40">
+        <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><FileCheck className="h-4 w-4 text-cyan-600" /> Compare with a CBP entry</CardTitle></CardHeader>
+        <CardContent className="text-sm text-muted-foreground py-4">CBP Form 7501 comparison is available for US-destination shipments only.</CardContent>
+      </Card>
+    );
+  }
+
+  const lcieProvisions = [
+    { label: 'Base HTS (MFN)', rate: calc.dutyTotal > 0 ? (calc.dutyTotal / (calc.subtotal || 1)) : 0, amount: calc.dutyTotal, note: 'AI-determined HS rate' },
+    { label: '9903.88.01/.03 China 25% reciprocal', rate: calc.chinaReciprocalTotal > 0 ? (calc.chinaReciprocalTotal / (calc.subtotal || 1)) : 0, amount: calc.chinaReciprocalTotal, note: '2025 EO China reciprocal' },
+    { label: '9903.01.24 CN/HK EO additional 20%', rate: calc.cnhkEoTotal > 0 ? (calc.cnhkEoTotal / (calc.subtotal || 1)) : 0, amount: calc.cnhkEoTotal },
+    { label: '9903.01.25 any-country reciprocal 10%', rate: calc.anyCountryTotal > 0 ? (calc.anyCountryTotal / (calc.subtotal || 1)) : 0, amount: calc.anyCountryTotal, note: 'any country of origin' },
+    { label: 'MPF (0.3464%)', rate: 0.003464, amount: calc.mpfTotal, note: 'US Merchandise Processing Fee' },
+    { label: 'HMF (0.125%, ocean only)', rate: 0.00125, amount: calc.hmfTotal, note: calc.hmfApplies ? 'ocean mode' : `NOT assessed (${calc.modeOfTransport ?? 'Ocean'} mode)` },
+  ];
+
+  // aggregate the CBP entry provisions across its lines for the comparison
+  const cbpProvisions = cbpEntry ? aggregateCbp(cbpEntry) : [];
+
+  return (
+    <Card className="border-cyan-200/60 dark:border-cyan-900/40">
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-base flex items-center gap-2"><FileCheck className="h-4 w-4 text-cyan-600 dark:text-cyan-400" /> Compare with a CBP Customs Entry (Form 7501)</CardTitle>
+            <CardDescription>Validate the LCIE engine&apos;s duty stack against the actual filed entry — ground truth.</CardDescription>
+          </div>
+          {cbpEntry && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge variant="outline" className="font-mono">{cbpEntry.entryNumber ?? '—'}</Badge>
+              {cbpEntry.port && <Badge variant="secondary">{cbpEntry.port}</Badge>}
+              {cbpEntry.modeOfTransport && <Badge variant="secondary">{cbpEntry.modeOfTransport}</Badge>}
+              {cbpEntry.countryOfOrigin && <Badge variant="secondary">{cbpEntry.countryOfOrigin}</Badge>}
+            </div>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="p-4">
+        {!cbpEntry ? (
+          <div
+            onClick={() => cbpInputRef.current?.click()}
+            className="cursor-pointer rounded-lg border-2 border-dashed border-cyan-200 dark:border-cyan-900/50 p-6 text-center hover:border-cyan-500/60 hover:bg-cyan-50/40 dark:hover:bg-cyan-950/20 transition-colors"
+          >
+            <input ref={cbpInputRef} type="file" accept=".pdf,.txt" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onCompareEntry(f); }} />
+            {cbpLoading ? <Loader2 className="h-5 w-5 text-cyan-600 animate-spin mx-auto" /> : <FileCheck className="h-5 w-5 text-cyan-600 mx-auto" />}
+            <p className="text-sm font-medium mt-2">{cbpLoading ? 'Parsing CBP entry…' : 'Drop a CBP Form 7501 duty-stack PDF here'}</p>
+            <p className="text-xs text-muted-foreground mt-1">Upload the real customs entry to see the side-by-side duty-stack comparison</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* headline reconciliation */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <Metric label="LCIE effective rate" value={`${(calc.effectiveRate * 100).toFixed(2)}%`} />
+              <Metric label="CBP effective duty" value={`${cbpEntry.effectiveDutyPct.toFixed(2)}%`} />
+              <Metric label="LCIE grand total" value={fmtMoney(calc.totalLandedCost, calc.currency)} />
+              <Metric label="CBP grand total" value={fmtMoney(cbpEntry.grandTotal, 'USD')} />
+            </div>
+
+            {/* side-by-side duty stack */}
+            <div className="overflow-x-auto lcie-scroll">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[200px]">Duty-stack component</TableHead>
+                    <TableHead className="text-right">LCIE engine (modelled)</TableHead>
+                    <TableHead className="text-right">CBP entry (filed)</TableHead>
+                    <TableHead className="text-center w-20">Match</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lcieProvisions.map((lp, i) => {
+                    const cp = cbpProvisions.find((p) => p.label.toLowerCase().includes(lp.label.split(' ')[0].replace('Base', 'Base').toLowerCase()) || (lp.label.includes('9903.88') && p.code.startsWith('9903.88')) || (lp.label.includes('9903.01.24') && p.code === '9903.01.24') || (lp.label.includes('9903.01.25') && p.code === '9903.01.25') || (lp.label.startsWith('MPF') && p.code === 'MPF') || (lp.label.startsWith('HMF') && p.code === 'HMF'));
+                    const lcRate = lp.rate; const cbRate = cp?.rate ?? 0;
+                    const lcAmt = lp.amount; const cbAmt = cp?.amount ?? 0;
+                    const rateMatch = cp && Math.abs(lcRate - cbRate) < 0.005;
+                    const amtClose = cp && Math.abs(lcAmt - cbAmt) < Math.max(2, cbAmt * 0.02);
+                    // For the SAME shipment the amounts would match too; across different shipments
+                    // (different PO vs CBP entry) the RATE is the apples-to-apples comparison.
+                    const match = cp ? (rateMatch ? (amtClose ? 'match' : 'rate-match') : 'mismatch') : 'n/a';
+                    return (
+                      <TableRow key={i} className={match === 'mismatch' ? 'bg-amber-50/50 dark:bg-amber-950/15' : ''}>
+                        <TableCell>
+                          <p className="text-sm font-medium leading-tight">{lp.label}</p>
+                          {lp.note && <p className="text-[11px] text-muted-foreground">{lp.note}</p>}
+                          {!cp && <p className="text-[11px] text-amber-600 dark:text-amber-400">not found in CBP entry</p>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <span className="font-mono text-xs">{fmtPct(lcRate)}</span>
+                          <br /><span className="font-mono text-xs text-muted-foreground">{fmtMoney(lcAmt, calc.currency)}</span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {cp ? (<><span className="font-mono text-xs">{fmtPct(cbRate)}</span><br /><span className="font-mono text-xs text-muted-foreground">{fmtMoney(cbAmt, 'USD')}</span></>) : <span className="text-xs text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {match === 'match' && <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white gap-1"><CheckCircle2 className="h-3 w-3" /> Match</Badge>}
+                          {match === 'rate-match' && <Badge className="bg-emerald-600/80 hover:bg-emerald-600/80 text-white gap-1"><CheckCircle2 className="h-3 w-3" /> Rate ✓</Badge>}
+                          {match === 'mismatch' && <Badge variant="destructive" className="gap-1"><AlertTriangle className="h-3 w-3" /> Diff</Badge>}
+                          {match === 'n/a' && <Badge variant="outline">n/a</Badge>}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+
+            {/* discrepancy callouts */}
+            <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/15 p-3 text-xs space-y-1.5">
+              <p className="font-medium text-amber-800 dark:text-amber-300 flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5" /> Reconciliation notes</p>
+              {Math.abs(calc.effectiveRate * 100 - cbpEntry.effectiveDutyPct) > 0.5 && (
+                <p>• Effective rate: LCIE <strong>{(calc.effectiveRate * 100).toFixed(2)}%</strong> vs CBP <strong>{cbpEntry.effectiveDutyPct.toFixed(2)}%</strong> — the LCIE engine {calc.effectiveRate * 100 > cbpEntry.effectiveDutyPct ? 'over' : 'under'}-states the burden by {Math.abs(calc.effectiveRate * 100 - cbpEntry.effectiveDutyPct).toFixed(2)} pts.</p>
+              )}
+              {!calc.hmfApplies && cbpEntry && !cbpEntry.hmfAssessed && (
+                <p>• <strong>HMF:</strong> both the LCIE engine and the CBP entry show no HMF assessed ({calc.modeOfTransport} mode) — ✓ consistent.</p>
+              )}
+              {calc.hmfApplies && cbpEntry && !cbpEntry.hmfAssessed && (
+                <p>• <strong>HMF:</strong> LCIE applied HMF (ocean mode) but the CBP entry did not assess it ({cbpEntry.modeOfTransport} mode) — set the transport mode to match the shipment.</p>
+              )}
+              <p>• Note: the LCIE engine uses the PO&apos;s entered value (${calc.subtotal.toLocaleString()} {calc.currency}); the CBP entry uses its own entered value (${cbpEntry.enteredValue.toLocaleString()} USD). The rate-stack comparison is the apples-to-apples view; dollar amounts differ when the shipments differ.</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => cbpInputRef.current?.click()} className="gap-1.5"><RefreshCw className="h-3.5 w-3.5" /> Compare another entry</Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-cyan-200/50 dark:border-cyan-900/40 bg-cyan-50/40 dark:bg-cyan-950/15 p-3">
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-base font-bold font-mono text-cyan-700 dark:text-cyan-300">{value}</p>
+    </div>
+  );
+}
+
+function aggregateCbp(entry: CbpEntry): { label: string; code: string; rate: number; amount: number }[] {
+  const map = new Map<string, { code: string; rate: number; amount: number; count: number }>();
+  for (const line of entry.lines) {
+    for (const p of line.provisions) {
+      const key = p.code;
+      const cur = map.get(key) ?? { code: p.code, rate: p.rate, amount: 0, count: 0 };
+      cur.amount += p.amount;
+      cur.rate = p.rate; // rates are the same across lines for a given provision
+      cur.count += 1;
+      map.set(key, cur);
+    }
+  }
+  const labelFor = (code: string) =>
+    code === 'Base' ? 'Base column-1 duty (MFN)'
+    : code === 'MPF' ? 'MPF (Merchandise Processing Fee)'
+    : code === 'HMF' ? 'HMF (Harbor Maintenance Fee)'
+    : code === '9903.88.01' || code === '9903.88.03' ? `${code} China 25% reciprocal`
+    : code === '9903.01.24' ? `${code} CN/HK EO additional 20%`
+    : code === '9903.01.25' ? `${code} any-country reciprocal 10%`
+    : code;
+  return [...map.values()].map((v) => ({ label: labelFor(v.code), code: v.code, rate: v.rate, amount: v.amount }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -597,7 +824,7 @@ function RegionCard({
           <CardTitle className="text-base flex items-center gap-2"><span className="text-lg">{calc.flag}</span> {calc.label} — duty stack</CardTitle>
           <Badge variant="outline" className="font-mono">{calc.currency}</Badge>
         </div>
-        <CardDescription className="pl-5">{calc.region === 'US' ? 'Duty on FOB · §301 / IEEPA · MPF/HMF · no federal VAT' : 'Duty on CIF · VAT on (CIF + duty)'}</CardDescription>
+        <CardDescription className="pl-5">{calc.region === 'US' ? 'Duty on FOB · 9903.88 (China 25%) + 9903.01.24 (CN/HK 20%) + 9903.01.25 (any 10%) · MPF' + (calc.hmfApplies ? ' + HMF' : ' (no HMF)') + ' · no federal VAT' : 'Duty on CIF · VAT on (CIF + duty)'}</CardDescription>
       </CardHeader>
       <CardContent className="pl-5 pb-3 pt-0">
         {/* Waterfall: step-by-step duty stack */}

@@ -64,11 +64,14 @@ Rules:
 - Always use realistic, correctly-digit-counted codes: US 8-10 digits, UK 10 digits, EU 8 digits (with spaces, e.g. "6109 10 00").
 - dutyRate is a DECIMAL ad valorem fraction (0.165 = 16.5%, 0 = free). dutyType ∈ {"ad valorem","specific","free"}.
 - vatRate is a DECIMAL (0.20 = 20%). For US, vatRate MUST be 0 (no federal VAT).
-- additionalLevies: object mapping levy name → decimal rate. For US always include {"MPF":0.003464,"HMF":0.00125,"Section301":<rate>,"IEEPA":<rate>}. For UK/EU use null or {}.
-- Section 301 (US only): the China-specific trade-remedy surcharge. If originCountry is CN and the HTS subheading is on Section 301 List 3 (most consumer apparel, leather goods, tools, ceramics, food), set "Section301":0.25. If on List 4A/4B (smartphones, laptops, some electronics — largely exempt/suspended), set "Section301":0. If origin is not CN, set 0. State the list assumption in reasoning.
-- IEEPA reciprocal tariff (US only): the 2025 IEEPA reciprocal duty. If originCountry is CN set "IEEPA":0.34 (modelled); 0 otherwise. Note in reasoning that this is a modelled estimate subject to executive action.
+- additionalLevies: object mapping levy name → decimal rate. For US always include {"MPF":0.003464,"ChinaReciprocal":<rate>,"CNHKEO":<rate>,"AnyCountry":<rate>}. For UK/EU use null or {}.
+- 9903.88.01/.03 China 25% reciprocal (US, ChinaReciprocal): the 2025 EO China-specific reciprocal tariff. If originCountry is CN set "ChinaReciprocal":0.25; 0 otherwise. (This is the modern Chapter-99 successor to the legacy Section 301 List 3 rate.)
+- 9903.01.24 CN/HK EO additional 20% (US, CNHKEO): an additional 20% on China/Hong Kong origin. If origin is CN set "CNHKEO":0.20; 0 otherwise.
+- 9903.01.25 any-country reciprocal 10% (US, AnyCountry): a 10% reciprocal duty applying to ANY country of origin (not just China). Always set "AnyCountry":0.10.
+- HMF (US, Harbor Maintenance Fee, 0.125%): ocean-mode only. Include "HMF":0.00125 if the shipment is ocean-borne; omit/0 for rail/air/truck. The calc engine decides based on modeOfTransport.
+- The three Chapter-99 provisions are applied ADDITIVELY to the entered value (FOB) — they stack, not offset. China origin → 25%+20%+10% = 55%; non-China → 10%.
 - confidence: 0..1 self-reported certainty (use ≥0.85 when grounded by KB, 0.6-0.84 for LLM-only inference).
-- reasoning: ONE concise sentence explaining the classification rationale (material + chapter + duty treatment + any Section 301/IEEPA note).
+- reasoning: ONE concise sentence explaining the classification rationale (material + chapter + duty treatment + the Chapter-99 stack).
 - If a product is genuinely duty-free under the WTO Information Technology Agreement (smartphones, laptops, semiconductors), set dutyRate 0 and dutyType "free" with a note in reasoning.
 
 Return ONLY valid JSON (no markdown fences, no prose) in this exact shape:
@@ -76,7 +79,7 @@ Return ONLY valid JSON (no markdown fences, no prose) in this exact shape:
   "items": [
     {
       "lineItemId": "<id from input>",
-      "us": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0, "additionalLevies": {"MPF":0.003464,"HMF":0.00125,"Section301":0.25,"IEEPA":0.34}, "confidence": 0.9, "reasoning": "..." },
+      "us": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0, "additionalLevies": {"MPF":0.003464,"ChinaReciprocal":0.25,"CNHKEO":0.20,"AnyCountry":0.10}, "confidence": 0.9, "reasoning": "..." },
       "uk": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0.2, "additionalLevies": null, "confidence": 0.9, "reasoning": "..." },
       "eu": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0.19, "additionalLevies": null, "confidence": 0.9, "reasoning": "..." }
     }
@@ -181,13 +184,28 @@ function sanitizeRegion(
   if (region === 'US') {
     const ll = (r?.additionalLevies && typeof r.additionalLevies === 'object' ? r.additionalLevies : {}) as Record<string, number>;
     const isCn = (originCountry ?? 'CN').toUpperCase() === 'CN';
-    const section301 = typeof ll.Section301 === 'number' && isFinite(ll.Section301) ? ll.Section301 : (isCn ? 0.25 : 0);
-    const ieepa = typeof ll.IEEPA === 'number' && isFinite(ll.IEEPA) ? ll.IEEPA : (isCn ? 0.34 : 0);
+    // 2025 Chapter-99 provisions (real CBP entry H42-0214088-9 structure):
+    //   ChinaReciprocal (9903.88.01, 25%) — China only
+    //   CNHKEO         (9903.01.24, 20%) — China/HK only
+    //   AnyCountry     (9903.01.25, 10%) — any country
+    // Legacy Section301/IEEPA keys are mapped for back-compat with older determinations.
+    const chinaReciprocal = typeof ll.ChinaReciprocal === 'number' && isFinite(ll.ChinaReciprocal) ? ll.ChinaReciprocal
+      : (typeof ll.Section301 === 'number' && isFinite(ll.Section301) ? ll.Section301 : (isCn ? 0.25 : 0));
+    const cnhkEo = typeof ll.CNHKEO === 'number' && isFinite(ll.CNHKEO) ? ll.CNHKEO
+      : (typeof ll.CNHK_EO === 'number' && isFinite(ll.CNHK_EO) ? ll.CNHK_EO
+        : (isCn ? 0.20 : 0));
+    const anyCountry = typeof ll.AnyCountry === 'number' && isFinite(ll.AnyCountry) ? ll.AnyCountry
+      : (typeof ll.AnyCountryReciprocal === 'number' && isFinite(ll.AnyCountryReciprocal) ? ll.AnyCountryReciprocal
+        : 0.10);
     additionalLevies = {
       MPF: DUTY_RULES.US.mpfRate!,
-      HMF: DUTY_RULES.US.hmfRate!,
-      Section301: section301,
-      IEEPA: ieepa,
+      HMF: DUTY_RULES.US.hmfRate!, // applied by the calc engine only for ocean mode
+      ChinaReciprocal: chinaReciprocal,
+      CNHKEO: cnhkEo,
+      AnyCountry: anyCountry,
+      // legacy aliases so older code that reads Section301/IEEPA still works
+      Section301: chinaReciprocal,
+      IEEPA: cnhkEo + anyCountry,
     };
   } else {
     additionalLevies = r?.additionalLevies && typeof r.additionalLevies === 'object' ? r.additionalLevies : null;
@@ -416,12 +434,21 @@ async function storeItemDeterminations(
           dutyType: regional?.dutyType ?? 'ad valorem',
           vatRate: region === 'US' ? 0 : (region === 'UK' ? 0.2 : 0.19),
           additionalLevies: region === 'US'
-            ? JSON.stringify({
-                MPF: DUTY_RULES.US.mpfRate,
-                HMF: DUTY_RULES.US.hmfRate,
-                Section301: ((li.originCountry ?? po.originCountry ?? 'CN').toUpperCase() === 'CN' ? 0.25 : 0),
-                IEEPA: ((li.originCountry ?? po.originCountry ?? 'CN').toUpperCase() === 'CN' ? 0.34 : 0),
-              })
+            ? (() => {
+                const cn = ((li.originCountry ?? po.originCountry ?? 'CN') + '').toUpperCase() === 'CN';
+                const chinaReciprocal = cn ? 0.25 : 0;   // 9903.88.01
+                const cnhkEo = cn ? 0.20 : 0;             // 9903.01.24
+                const anyCountry = 0.10;                   // 9903.01.25 (any country)
+                return JSON.stringify({
+                  MPF: DUTY_RULES.US.mpfRate,
+                  HMF: DUTY_RULES.US.hmfRate, // calc engine applies only for ocean mode
+                  ChinaReciprocal: chinaReciprocal,
+                  CNHKEO: cnhkEo,
+                  AnyCountry: anyCountry,
+                  Section301: chinaReciprocal,           // legacy alias
+                  IEEPA: cnhkEo + anyCountry,             // legacy alias
+                });
+              })()
             : null,
           confidence: fb ? 0.6 : 0.3,
           reasoning: fb ? `Fallback to KB entry "${fb.id}" (${error ?? 'LLM unavailable'}).` : 'No grounding; LLM unavailable.',

@@ -64,8 +64,13 @@ export async function calculateLandedCost(
   const subtotalSrc = po.lineItems.reduce((s, li) => s + li.quantity * li.unitValue, 0);
 
   const lineBreakdown: LineBreakdown[] = [];
-  let dutyTotal = 0, section301Total = 0, ieepaTotal = 0, vatTotal = 0,
-    hmfTotal = 0, otherLeviesTotal = 0;
+  let dutyTotal = 0, section301Total = 0, ieepaTotal = 0,
+    chinaReciprocalTotal = 0, cnhkEoTotal = 0, anyCountryTotal = 0,
+    vatTotal = 0, hmfTotal = 0, otherLeviesTotal = 0;
+
+  // HMF applies only to ocean-mode shipments (19 U.S.C. §4462). Rail/air/truck = no HMF.
+  const mode = (inputs.modeOfTransport ?? 'Ocean').toLowerCase();
+  const hmfApplies = region === 'US' && mode.includes('ocean');
 
   for (const li of po.lineItems) {
     const fobValue = li.quantity * li.unitValue; // PO currency
@@ -79,28 +84,43 @@ export async function calculateLandedCost(
     const dutyRate = det?.dutyRate ?? 0;
     const vatRate = region === 'US' ? 0 : (det?.vatRate ?? dest.vatRate ?? 0);
 
-    // parse Section 301 / IEEPA / other from the determination's additionalLevies JSON
-    let section301Rate = 0, ieepaRate = 0, lineOtherLevies = 0;
+    // parse the 2025 Chapter-99 provisions from the determination's additionalLevies JSON.
+    // The agent stores: ChinaReciprocal (9903.88.01, 25%), CNHKEO (9903.01.24, 20%),
+    // AnyCountry (9903.01.25, 10%), MPF, HMF. Legacy Section301/IEEPA keys are mapped.
+    let chinaReciprocalRate = 0, cnhkEoRate = 0, anyCountryRate = 0, lineOtherLevies = 0;
     if (det?.additionalLevies) {
       try {
         const obj = JSON.parse(det.additionalLevies) as Record<string, number>;
         if (region === 'US') {
-          section301Rate = typeof obj.Section301 === 'number' ? obj.Section301 : 0;
-          ieepaRate = typeof obj.IEEPA === 'number' ? obj.IEEPA : 0;
+          chinaReciprocalRate = num(obj.ChinaReciprocal ?? obj.Section301);
+          cnhkEoRate = num(obj.CNHKEO ?? obj.CNHK_EO);
+          anyCountryRate = num(obj.AnyCountry ?? obj.AnyCountryReciprocal);
+          // legacy IEEPA fallback: if only IEEPA present (old determinations), split 20%+10%
+          if (!cnhkEoRate && !anyCountryRate && obj.IEEPA) {
+            cnhkEoRate = Math.min(0.20, num(obj.IEEPA));
+            anyCountryRate = Math.max(0, num(obj.IEEPA) - 0.20) || 0.10;
+          }
         }
         for (const [k, v] of Object.entries(obj)) {
-          if (k === 'MPF' || k === 'HMF' || k === 'Section301' || k === 'IEEPA') continue;
+          if (['MPF','HMF','Section301','IEEPA','ChinaReciprocal','CNHKEO','CNHK_EO','AnyCountry','AnyCountryReciprocal'].includes(k)) continue;
           if (typeof v === 'number') lineOtherLevies += cifValue * v;
         }
       } catch { /* ignore */ }
     }
+    const isCn = ((li.originCountry ?? po.originCountry ?? 'CN') + '').toUpperCase() === 'CN';
+    // 9903.88.01 (25%) + 9903.01.24 (20%) apply only to China origin; 9903.01.25 (10%) to any country.
+    const section301Rate = chinaReciprocalRate;            // back-compat alias
+    const ieepaRate = cnhkEoRate + anyCountryRate;          // back-compat alias
 
     const dutyBase = rule.dutyCalcBase === 'CIF' ? cifValue : fobValue;
     const duty = dutyBase * dutyRate;
-    const section301 = region === 'US' ? fobValue * section301Rate : 0;
-    const ieepa = region === 'US' ? fobValue * ieepaRate : 0;
+    const chinaReciprocal = region === 'US' && isCn ? fobValue * chinaReciprocalRate : 0;
+    const cnhkEo = region === 'US' && isCn ? fobValue * cnhkEoRate : 0;
+    const anyCountry = region === 'US' ? fobValue * anyCountryRate : 0;
+    const section301 = chinaReciprocal;                    // back-compat alias
+    const ieepa = cnhkEo + anyCountry;                      // back-compat alias
     let hmf = 0;
-    if (region === 'US' && rule.hmfRate) hmf = fobValue * rule.hmfRate;
+    if (hmfApplies && rule.hmfRate) hmf = fobValue * rule.hmfRate;
     let vat = 0;
     if (region !== 'US') {
       const vatBase = rule.vatCalcBase === 'CIF_plus_duty' ? cifValue + duty : cifValue;
@@ -108,8 +128,8 @@ export async function calculateLandedCost(
     }
 
     dutyTotal += duty;
-    section301Total += section301;
-    ieepaTotal += ieepa;
+    section301Total += section301; chinaReciprocalTotal += chinaReciprocal;
+    ieepaTotal += ieepa; cnhkEoTotal += cnhkEo; anyCountryTotal += anyCountry;
     vatTotal += vat;
     hmfTotal += hmf;
     otherLeviesTotal += lineOtherLevies;
@@ -122,6 +142,7 @@ export async function calculateLandedCost(
       tariffDescription: det?.tariffDescription ?? undefined,
       dutyRate, dutyType: det?.dutyType ?? 'ad valorem',
       vatRate, section301Rate, ieepaRate,
+      chinaReciprocalRate, cnhkEoRate, anyCountryRate,
       confidence: det?.confidence ?? 0,
       reasoning: det?.reasoning ?? undefined,
       fobValue: round(x(fobValue)),
@@ -129,6 +150,9 @@ export async function calculateLandedCost(
       duty: round(x(duty)),
       section301: round(x(section301)),
       ieepa: round(x(ieepa)),
+      chinaReciprocal: round(x(chinaReciprocal)),
+      cnhkEo: round(x(cnhkEo)),
+      anyCountry: round(x(anyCountry)),
       vat: round(x(vat)),
       mpf: 0, // allocated after PO-level MPF
       hmf: round(x(hmf)),
@@ -174,14 +198,17 @@ export async function calculateLandedCost(
   dutyTotal = round(x(dutyTotal));
   section301Total = round(x(section301Total));
   ieepaTotal = round(x(ieepaTotal));
+  chinaReciprocalTotal = round(x(chinaReciprocalTotal));
+  cnhkEoTotal = round(x(cnhkEoTotal));
+  anyCountryTotal = round(x(anyCountryTotal));
   vatTotal = round(x(vatTotal));
   mpfTotal = round(x(mpfTotal));
   hmfTotal = round(x(hmfTotal));
   otherLeviesTotal = round(x(otherLeviesTotal));
 
   const totalLandedCost = round(
-    subtotal + freightDest + insuranceDest + otherChargesDest + dutyTotal + section301Total +
-    ieepaTotal + vatTotal + mpfTotal + hmfTotal + otherLeviesTotal + otherImportChargesDest
+    subtotal + freightDest + insuranceDest + otherChargesDest + dutyTotal + chinaReciprocalTotal +
+    cnhkEoTotal + anyCountryTotal + vatTotal + mpfTotal + hmfTotal + otherLeviesTotal + otherImportChargesDest
   );
   const effectiveRate = subtotal > 0 ? totalLandedCost / subtotal - 1 : 0;
 
@@ -201,11 +228,13 @@ export async function calculateLandedCost(
     cum = cifTotal;
   }
   if (dutyTotal > 0) push(`+ Import duty (MFN)`, dutyTotal, avgDutyRate(lineBreakdown), 'AI-determined HS rate × calc base');
-  if (section301Total > 0) push('+ Section 301 surcharge', section301Total, avgRate(lineBreakdown, 'section301Rate'), 'CN-origin trade remedy');
-  if (ieepaTotal > 0) push('+ IEEPA reciprocal tariff', ieepaTotal, avgRate(lineBreakdown, 'ieepaRate'), '2025 IEEPA reciprocal duty');
+  if (chinaReciprocalTotal > 0) push('+ 9903.88.01 China 25% reciprocal', chinaReciprocalTotal, avgRate(lineBreakdown, 'chinaReciprocalRate'), '2025 EO China reciprocal (replaces legacy Section 301)');
+  if (cnhkEoTotal > 0) push('+ 9903.01.24 CN/HK EO additional 20%', cnhkEoTotal, avgRate(lineBreakdown, 'cnhkEoRate'), 'China/Hong Kong additional duty');
+  if (anyCountryTotal > 0) push('+ 9903.01.25 any-country reciprocal 10%', anyCountryTotal, avgRate(lineBreakdown, 'anyCountryRate'), 'Applies to any country of origin');
   if (vatTotal > 0) push('+ VAT', vatTotal, dest.vatRate, region !== 'US' ? `On (CIF + duty) — ${dest.countryName} standard rate` : undefined);
   if (mpfTotal > 0) push('+ MPF (Merchandise Processing Fee)', mpfTotal, rule.mpfRate, 'US 0.3464%, floored/capped');
-  if (hmfTotal > 0) push('+ HMF (Harbor Maintenance Fee)', hmfTotal, rule.hmfRate, 'US ocean 0.125%');
+  if (hmfTotal > 0) push('+ HMF (Harbor Maintenance Fee)', hmfTotal, rule.hmfRate, 'US ocean 0.125% (not assessed for rail/air)');
+  if (region === 'US' && !hmfApplies) waterfall.push({ label: '– HMF not assessed', amount: 0, cumulative: cum, note: `${mode} mode — HMF is ocean-only (19 U.S.C. §4462)` });
   if (otherLeviesTotal > 0) push('+ Other levies', otherLeviesTotal);
   if (customsBrokerFee) push('+ Customs broker fee', x(customsBrokerFee));
   if (documentationFee) push('+ Documentation fee', x(documentationFee));
@@ -216,18 +245,20 @@ export async function calculateLandedCost(
 
   const calculation: RegionCalculation = {
     region, label: dest.label, flag: dest.flag, currency: dest.currency,
-    subtotal, dutyTotal, section301Total, ieepaTotal, vatTotal, mpfTotal, hmfTotal,
+    subtotal, dutyTotal, section301Total, ieepaTotal,
+    chinaReciprocalTotal, cnhkEoTotal, anyCountryTotal,
+    vatTotal, mpfTotal, hmfTotal, hmfApplies, modeOfTransport: inputs.modeOfTransport ?? 'Ocean',
     otherLevies: otherLeviesTotal, freight: freightDest, insurance: insuranceDest,
     otherImportCharges: otherImportChargesDest,
     totalLandedCost, effectiveRate, lineBreakdown, waterfall, notes: rule.notes,
   };
 
-  // persist (single region now; Section 301 + IEEPA folded into otherLevies for the DB row)
+  // persist (single region; the 2025 Chapter-99 provisions folded into otherLevies for the DB row)
   await db.landedCostCalculation.create({
     data: {
       poId, region,
       subtotal, dutyTotal, vatTotal, mpfTotal, hmfTotal,
-      otherLevies: otherLeviesTotal + section301Total + ieepaTotal,
+      otherLevies: otherLeviesTotal + chinaReciprocalTotal + cnhkEoTotal + anyCountryTotal,
       freight: freightDest, insurance: insuranceDest,
       totalLandedCost, breakdownJson: JSON.stringify(lineBreakdown),
     },
@@ -264,7 +295,7 @@ function avgDutyRate(lines: LineBreakdown[]): number | undefined {
   if (fob <= 0) return undefined;
   return lines.reduce((s, l) => s + l.dutyRate * l.fobValue, 0) / fob;
 }
-function avgRate(lines: LineBreakdown[], key: 'section301Rate' | 'ieepaRate'): number | undefined {
+function avgRate(lines: LineBreakdown[], key: 'section301Rate' | 'ieepaRate' | 'chinaReciprocalRate' | 'cnhkEoRate' | 'anyCountryRate'): number | undefined {
   const fob = lines.reduce((s, l) => s + l.fobValue, 0);
   if (fob <= 0) return undefined;
   return lines.reduce((s, l) => s + l[key] * l.fobValue, 0) / fob;
