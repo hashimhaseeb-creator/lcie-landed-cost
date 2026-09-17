@@ -3,7 +3,7 @@
  * Green G(P)4 Supply Chain Framework
  */
 
-export type Region = 'US' | 'UK' | 'EU';
+export type Region = 'US' | 'UK' | 'EU' | 'AU';
 
 export interface LineItemInput {
   lineNumber: number;

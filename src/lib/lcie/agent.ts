@@ -56,14 +56,15 @@ You are a senior customs broker and trade-compliance classifier with deep expert
 - US Harmonized Tariff Schedule (HTS) — 10-digit statistical suffixes, Column 1 (MFN) general rates
 - UK Global Tariff — 10-digit commodity codes, Third Country duty (post-Brexit MFN), UK VAT (20% standard, 5% reduced)
 - EU TARIC / Combined Nomenclature — 8-digit CN codes, MFN (ergn) duty, member-state VAT (DE 19% default)
+- Australia (ABF) — 8-digit tariff code, General/MFN rate (most consumer goods incl. water filters are FREE), GST 10% on (customs value + duty), flat Import Processing Charge AUD 50 (≥ AUD 10,000) handled by the calc engine. No Chapter-99 / MPF / HMF equivalents.
 
-Your job: given a list of purchase-order line items (description, material, quantity, unit, origin country), determine for EACH item and for EACH region (US, UK, EU) the correct HS classification, the general/MFN ad valorem duty rate, the VAT rate, and any other leviable charges.
+Your job: given a list of purchase-order line items (description, material, quantity, unit, origin country), determine for EACH item and for EACH region (US, UK, EU, AU) the correct HS classification, the general/MFN ad valorem duty rate, the VAT/GST rate, and any other leviable charges.
 
 Rules:
 - Use the grounding context provided (real HS codes from a curated knowledge base) as your primary source when the product matches. Only deviate when you have strong justification.
 - Always use realistic, correctly-digit-counted codes: US 8-10 digits, UK 10 digits, EU 8 digits (with spaces, e.g. "6109 10 00").
 - dutyRate is a DECIMAL ad valorem fraction (0.165 = 16.5%, 0 = free). dutyType ∈ {"ad valorem","specific","free"}.
-- vatRate is a DECIMAL (0.20 = 20%). For US, vatRate MUST be 0 (no federal VAT).
+- vatRate is a DECIMAL (0.20 = 20%). For US, vatRate MUST be 0 (no federal VAT). For AU, vatRate is the GST rate (0.10 = 10%) on (customs value + duty). For UK/EU it is the member-state VAT.
 - additionalLevies: object mapping levy name → decimal rate. For US always include {"MPF":0.003464,"ChinaReciprocal":<rate>,"CNHKEO":<rate>,"AnyCountry":<rate>}. For UK/EU use null or {}.
 - 9903.88.01/.03 China 25% reciprocal (US, ChinaReciprocal): the 2025 EO China-specific reciprocal tariff. If originCountry is CN set "ChinaReciprocal":0.25; 0 otherwise. (This is the modern Chapter-99 successor to the legacy Section 301 List 3 rate.)
 - 9903.01.24 CN/HK EO additional 20% (US, CNHKEO): an additional 20% on China/Hong Kong origin. If origin is CN set "CNHKEO":0.20; 0 otherwise.
@@ -81,7 +82,8 @@ Return ONLY valid JSON (no markdown fences, no prose) in this exact shape:
       "lineItemId": "<id from input>",
       "us": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0, "additionalLevies": {"MPF":0.003464,"ChinaReciprocal":0.25,"CNHKEO":0.20,"AnyCountry":0.10}, "confidence": 0.9, "reasoning": "..." },
       "uk": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0.2, "additionalLevies": null, "confidence": 0.9, "reasoning": "..." },
-      "eu": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0.19, "additionalLevies": null, "confidence": 0.9, "reasoning": "..." }
+      "eu": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0.19, "additionalLevies": null, "confidence": 0.9, "reasoning": "..." },
+      "au": { "hsCode": "8421.21.00.90", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "free", "vatRate": 0.10, "additionalLevies": null, "confidence": 0.9, "reasoning": "..." }
     }
   ]
 }
@@ -111,6 +113,7 @@ function buildUserPrompt(
             us: { code: c.us.code, dutyRate: c.us.dutyRate, dutyType: c.us.dutyType, desc: c.us.description },
             uk: { code: c.uk.code, dutyRate: c.uk.dutyRate, dutyType: c.uk.dutyType, vatRate: c.uk.vatRate, desc: c.uk.description },
             eu: { code: c.eu.code, dutyRate: c.eu.dutyRate, dutyType: c.eu.dutyType, vatRate: c.eu.vatRate, desc: c.eu.description },
+            au: c.au ? { code: c.au.code, dutyRate: c.au.dutyRate, dutyType: c.au.dutyType, gstRate: c.au.gstRate, desc: c.au.description } : undefined,
           }))
         : [];
       return `### LINE ${li.lineNumber} (id=${li.id})
@@ -207,6 +210,10 @@ function sanitizeRegion(
       Section301: chinaReciprocal,
       IEEPA: cnhkEo + anyCountry,
     };
+  } else if (region === 'AU') {
+    // Australia: GST 10% (stored in vatRate), flat IPC handled by the calc engine.
+    // No Chapter-99 / MPF / HMF equivalents — additionalLevies is null.
+    additionalLevies = null;
   } else {
     additionalLevies = r?.additionalLevies && typeof r.additionalLevies === 'object' ? r.additionalLevies : null;
   }
@@ -396,13 +403,15 @@ async function storeItemDeterminations(
 
   for (const region of [destRegion] as Region[]) {
     if (parsed && out) {
-      const raw = out[region.toLowerCase() as 'us' | 'uk' | 'eu'];
+      const raw = out[region.toLowerCase() as 'us' | 'uk' | 'eu' | 'au'];
       const fbRegional = fb
         ? region === 'US'
           ? { code: fb.us.code, dutyRate: fb.us.dutyRate, dutyType: fb.us.dutyType, vatRate: 0, description: fb.us.description }
           : region === 'UK'
             ? { code: fb.uk.code, dutyRate: fb.uk.dutyRate, dutyType: fb.uk.dutyType, vatRate: fb.uk.vatRate, description: fb.uk.description }
-            : { code: fb.eu.code, dutyRate: fb.eu.dutyRate, dutyType: fb.eu.dutyType, vatRate: fb.eu.vatRate, description: fb.eu.description }
+            : region === 'AU'
+              ? { code: fb.au?.code ?? fb.eu.code, dutyRate: fb.au?.dutyRate ?? fb.eu.dutyRate, dutyType: fb.au?.dutyType ?? fb.eu.dutyType, vatRate: fb.au?.gstRate ?? 0.10, description: fb.au?.description ?? fb.eu.description }
+              : { code: fb.eu.code, dutyRate: fb.eu.dutyRate, dutyType: fb.eu.dutyType, vatRate: fb.eu.vatRate, description: fb.eu.description }
         : undefined;
       const sanitized = sanitizeRegion(raw, region, fbRegional, li.originCountry ?? po.originCountry);
       const det = await db.hsDetermination.create({
@@ -423,7 +432,9 @@ async function storeItemDeterminations(
       determinations.push(toDto(det, li));
     } else {
       // Fallback: KB grounding only (LLM call failed or timed out)
-      const regional = fb ? (region === 'US' ? fb.us : region === 'UK' ? fb.uk : fb.eu) : null;
+      const regional = fb
+        ? (region === 'US' ? fb.us : region === 'UK' ? fb.uk : region === 'AU' ? (fb.au ?? fb.eu) : fb.eu)
+        : null;
       const det = await db.hsDetermination.create({
         data: {
           lineItemId: li.id,
@@ -432,7 +443,7 @@ async function storeItemDeterminations(
           tariffDescription: regional?.description ?? 'LCIE fallback (no LLM parse)',
           dutyRate: regional?.dutyRate ?? 0,
           dutyType: regional?.dutyType ?? 'ad valorem',
-          vatRate: region === 'US' ? 0 : (region === 'UK' ? 0.2 : 0.19),
+          vatRate: region === 'US' ? 0 : (region === 'UK' ? 0.2 : region === 'AU' ? 0.10 : 0.19),
           additionalLevies: region === 'US'
             ? (() => {
                 const cn = ((li.originCountry ?? po.originCountry ?? 'CN') + '').toUpperCase() === 'CN';
@@ -449,7 +460,9 @@ async function storeItemDeterminations(
                   IEEPA: cnhkEo + anyCountry,             // legacy alias
                 });
               })()
-            : null,
+            : region === 'AU'
+              ? JSON.stringify({ gstRate: 0.10, ipcFlat: DUTY_RULES.AU.ipcFlat ?? 50 })
+              : null,
           confidence: fb ? 0.6 : 0.3,
           reasoning: fb ? `Fallback to KB entry "${fb.id}" (${error ?? 'LLM unavailable'}).` : 'No grounding; LLM unavailable.',
           groundingRefs,
@@ -458,7 +471,7 @@ async function storeItemDeterminations(
       determinations.push(toDto(det, li));
     }
   }
-  pushStep({ lineItemId: li.id, description: `L${li.lineNumber}: stored US/UK/EU determinations${error ? ' (with KB fallback)' : ''}`, status: 'stored' });
+  pushStep({ lineItemId: li.id, description: `L${li.lineNumber}: stored ${destRegion} determination${error ? ' (with KB fallback)' : ''}`, status: 'stored' });
 }
 
 function toDto(

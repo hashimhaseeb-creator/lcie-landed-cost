@@ -64,6 +64,9 @@ export interface HsCodeEntry {
     vatRate: number;
     memberStateVat?: { country: string; rate: number }[];
   };
+  /** Australia (ABF) 8-digit tariff code + General duty + GST 10%. Optional — when
+   *  absent the agent infers the AU classification from the 6-digit HS base + 0% General. */
+  au?: RegionalHsCode & { gstRate: number };
 }
 
 /**
@@ -85,13 +88,17 @@ export interface DutyRule {
   mpfMax?: number;
   /** US Harbor Maintenance Fee rate (0.125%, ocean only). */
   hmfRate?: number;
-  /** Federal/national VAT rate (0 for US). */
+  /** Federal/national VAT rate (0 for US). For AU this is GST (10%). */
   vatRate?: number;
-  /** Human-friendly VAT label. */
+  /** Human-friendly VAT/GST label. */
   vatLabel?: string;
-  /** Duty assessment base: US uses FOB, UK/EU use CIF. */
+  /** Australia Import Processing Charge — flat fee for consignments ≥ AUD 10,000. */
+  ipcFlat?: number;
+  /** Australia IPC for consignments under AUD 10,000 but over AUD 1,000. */
+  ipcFlatLow?: number;
+  /** Duty assessment base: US uses FOB, UK/EU/AU use CIF. */
   dutyCalcBase: 'FOB' | 'CIF';
-  /** VAT assessment base: UK/EU use CIF+duty; US has no federal VAT. */
+  /** VAT assessment base: UK/EU/AU use CIF+duty; US has no federal VAT. */
   vatCalcBase: 'CIF_plus_duty' | 'FOB' | 'n/a';
   /** Brief explanatory note for the UI / LLM prompt. */
   notes: string;
@@ -1030,6 +1037,14 @@ export const HS_KNOWLEDGE_BASE: HsCodeEntry[] = [
         { country: 'Spain', rate: 0.21 },
       ],
     },
+    au: {
+      code: '8421.21.00.90',
+      description: 'Filtering or purifying machinery and apparatus for water (cartridge filter)',
+      dutyRate: 0,
+      dutyType: 'free',
+      gstRate: 0.10,
+      specialNotes: 'Australia General rate FREE. GST 10% on (customs value + duty). Import Processing Charge AUD 50 flat (≥ AUD 10,000).',
+    },
   },
   {
     id: 'water-filter-housing-system',
@@ -1071,6 +1086,14 @@ export const HS_KNOWLEDGE_BASE: HsCodeEntry[] = [
         { country: 'Spain', rate: 0.21 },
       ],
     },
+    au: {
+      code: '8421.21.00.90',
+      description: 'Filtering or purifying machinery and apparatus for water (housing/system)',
+      dutyRate: 0,
+      dutyType: 'free',
+      gstRate: 0.10,
+      specialNotes: 'Australia General rate FREE. GST 10% on (customs value + duty). Import Processing Charge AUD 50 flat (≥ AUD 10,000).',
+    },
   },
 ];
 
@@ -1083,7 +1106,7 @@ export const HS_KNOWLEDGE_BASE: HsCodeEntry[] = [
  * calculation engine and the LLM system prompt so the model knows
  * which base, VAT and fees apply in each jurisdiction.
  */
-export const DUTY_RULES: Record<'US' | 'UK' | 'EU', DutyRule> = {
+export const DUTY_RULES: Record<'US' | 'UK' | 'EU' | 'AU', DutyRule> = {
   US: {
     label: 'United States',
     flag: '🇺🇸',
@@ -1128,6 +1151,23 @@ export const DUTY_RULES: Record<'US' | 'UK' | 'EU', DutyRule> = {
       'VAT is levied by each member state on (CIF + duty + excise) at the national rate — Germany 19% (default), France 20%, Netherlands 21%, Italy 22%, Spain 21%. ' +
       'Reduced rates apply to food, books, medicines, etc. in most states. ' +
       'No MPF / HMF equivalents. Excise duties apply separately to alcohol, tobacco, energy products.',
+  },
+  AU: {
+    label: 'Australia',
+    flag: '🇦🇺',
+    currency: 'AUD',
+    vatRate: 0.10,
+    vatLabel: 'GST (10%)',
+    ipcFlat: 50,        // Import Processing Charge — flat AUD 50 for consignments ≥ AUD 10,000
+    ipcFlatLow: 40,     // AUD 40 for consignments < AUD 10,000 but > AUD 1,000 (SAC = no charge under AUD 1,000)
+    dutyCalcBase: 'CIF',
+    vatCalcBase: 'CIF_plus_duty',
+    notes:
+      'Australia (ABF) applies the General / MFN customs duty on the customs value (transaction value + freight + insurance + other = CIF) using the 8-digit Australian Tariff code. ' +
+      'Most consumer goods — incl. water filters (8421.21.00.90), electronics, food — carry a FREE (0%) General rate. ' +
+      'Goods & Services Tax (GST) 10% is levied on (customs value + customs duty + other taxable charges) — equivalent to VAT on (CIF + duty). ' +
+      'Import Processing Charge (IPC) is a FLAT AUD 50 for formal entries (consignments ≥ AUD 10,000), AUD 40 for consignments between AUD 1,000 and AUD 10,000; low-value (under AUD 1,000) via SAC attracts no charge. ' +
+      'No MPF / HMF / Section 301 / IEEPA equivalents. Wine (WET 29%), luxury car tax (LCT), and excise on alcohol/tobacco/fuel apply separately to specific goods.',
   },
 };
 

@@ -97,6 +97,26 @@ export const SAMPLE_POS: SamplePo[] = [
       { lineNumber: 5, sku: 'GL-WINE-350', description: 'Crystal wine glasses, 350ml, stemware', material: 'Glass', quantity: 3000, unit: 'PCS', unitValue: 1.35, originCountry: 'CN' },
     ],
   },
+  {
+    id: 'au-water-filtration',
+    title: 'AU Water Filtration (Australia dest)',
+    blurb: 'Water-filter cartridges + housings consigned to Australia — exercises the ABF duty stack: FREE General rate, GST 10% on (CIF + duty), flat Import Processing Charge AUD 50.',
+    poNumber: 'PO-GP4-2025-AU01',
+    supplier: 'Hebei Chengda Water Technology Co., Ltd.',
+    originCountry: 'CN',
+    destinationCountry: 'AU',
+    currency: 'USD',
+    incoterm: 'CIF',
+    freight: 3200,
+    insurance: 480,
+    otherCharges: 210,
+    lineItems: [
+      { lineNumber: 1, sku: 'USWF-TK-0835-RTB-BLK', description: 'USWF-TK-0835-RTB-BLK', material: 'Water filter cartridge', quantity: 200, unit: 'PCS', unitValue: 142.0, originCountry: 'CN' },
+      { lineNumber: 2, sku: 'TIER1-P5-20BB', description: 'TIER1-P5-20BB', material: 'Sediment filter cartridge', quantity: 1500, unit: 'PCS', unitValue: 18.5, originCountry: 'CN' },
+      { lineNumber: 3, sku: 'WH-PREFILTER-KIT-1', description: 'WH-PREFILTER-KIT-1', material: 'Water filter housing kit', quantity: 300, unit: 'PCS', unitValue: 64.0, originCountry: 'CN' },
+      { lineNumber: 4, sku: 'USWF-BT-70L-BK', description: 'USWF-BT-70L-BK', material: 'Water filter tank', quantity: 120, unit: 'PCS', unitValue: 210.0, originCountry: 'CN' },
+    ],
+  },
 ];
 
 export function getSamplePo(id: string): SamplePo | undefined {

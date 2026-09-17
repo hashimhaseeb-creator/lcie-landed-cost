@@ -12,7 +12,7 @@ import { DUTY_RULES, type Region } from '@/lib/hs-knowledge-base';
 export interface DestinationInfo {
   countryCode: string;
   countryName: string;
-  region: Region;            // 'US' | 'UK' | 'EU'
+  region: Region;            // 'US' | 'UK' | 'EU' | 'AU'
   currency: string;           // 'USD' | 'GBP' | 'EUR' | 'PLN' | 'SEK' | …
   vatRate: number;            // standard VAT for this country (0 for US)
   flag: string;
@@ -86,6 +86,7 @@ export function resolveDestination(countryCode?: string | null): DestinationInfo
   let region: Region;
   if (cc === 'US') region = 'US';
   else if (cc === 'GB' || cc === 'UK') region = 'UK';
+  else if (cc === 'AU') region = 'AU';
   else if (EU_COUNTRIES.has(cc)) region = 'EU';
   else region = 'US'; // default fallback for unknown countries
 

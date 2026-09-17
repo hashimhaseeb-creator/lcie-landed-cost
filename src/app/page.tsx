@@ -595,7 +595,7 @@ function ResultsDashboard({
                   {c.region === 'US' && <TableHead className="text-right w-20">9903.88</TableHead>}
                   {c.region === 'US' && <TableHead className="text-right w-20">9903.01.24</TableHead>}
                   {c.region === 'US' && <TableHead className="text-right w-20">9903.01.25</TableHead>}
-                  {c.region !== 'US' && <TableHead className="text-right w-20">VAT</TableHead>}
+                  {c.region !== 'US' && <TableHead className="text-right w-20">{c.region === 'AU' ? 'GST' : 'VAT'}</TableHead>}
                   <TableHead className="text-right w-24">Line total</TableHead><TableHead className="w-20">Conf.</TableHead><TableHead className="min-w-[240px]">Reasoning</TableHead>
                 </TableRow>
               </TableHeader>
@@ -824,7 +824,7 @@ function RegionCard({
           <CardTitle className="text-base flex items-center gap-2"><span className="text-lg">{calc.flag}</span> {calc.label} — duty stack</CardTitle>
           <Badge variant="outline" className="font-mono">{calc.currency}</Badge>
         </div>
-        <CardDescription className="pl-5">{calc.region === 'US' ? 'Duty on FOB · 9903.88 (China 25%) + 9903.01.24 (CN/HK 20%) + 9903.01.25 (any 10%) · MPF' + (calc.hmfApplies ? ' + HMF' : ' (no HMF)') + ' · no federal VAT' : 'Duty on CIF · VAT on (CIF + duty)'}</CardDescription>
+        <CardDescription className="pl-5">{calc.region === 'US' ? 'Duty on FOB · 9903.88 (China 25%) + 9903.01.24 (CN/HK 20%) + 9903.01.25 (any 10%) · MPF' + (calc.hmfApplies ? ' + HMF' : ' (no HMF)') + ' · no federal VAT' : calc.region === 'AU' ? 'Duty on CIF (General rate, often FREE) · GST 10% on (CIF + duty) · Import Processing Charge A$50 (flat)' : 'Duty on CIF · VAT on (CIF + duty)'}</CardDescription>
       </CardHeader>
       <CardContent className="pl-5 pb-3 pt-0">
         {/* Waterfall: step-by-step duty stack */}

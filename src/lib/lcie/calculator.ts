@@ -206,9 +206,18 @@ export async function calculateLandedCost(
   hmfTotal = round(x(hmfTotal));
   otherLeviesTotal = round(x(otherLeviesTotal));
 
+  // Australia Import Processing Charge — a FLAT fee in AUD (the destination currency),
+  // not ad valorem. AUD 50 for formal entries (≥ AUD 10,000), AUD 40 between AUD 1,000
+  // and AUD 10,000, no charge for low-value (under AUD 1,000, SAC).
+  let ipcTotal = 0;
+  if (region === 'AU') {
+    if (subtotal >= 10000) ipcTotal = rule.ipcFlat ?? 0;
+    else if (subtotal >= 1000) ipcTotal = rule.ipcFlatLow ?? 0;
+  }
+
   const totalLandedCost = round(
     subtotal + freightDest + insuranceDest + otherChargesDest + dutyTotal + chinaReciprocalTotal +
-    cnhkEoTotal + anyCountryTotal + vatTotal + mpfTotal + hmfTotal + otherLeviesTotal + otherImportChargesDest
+    cnhkEoTotal + anyCountryTotal + vatTotal + mpfTotal + hmfTotal + otherLeviesTotal + otherImportChargesDest + ipcTotal
   );
   const effectiveRate = subtotal > 0 ? totalLandedCost / subtotal - 1 : 0;
 
@@ -231,10 +240,11 @@ export async function calculateLandedCost(
   if (chinaReciprocalTotal > 0) push('+ 9903.88.01 China 25% reciprocal', chinaReciprocalTotal, avgRate(lineBreakdown, 'chinaReciprocalRate'), '2025 EO China reciprocal (replaces legacy Section 301)');
   if (cnhkEoTotal > 0) push('+ 9903.01.24 CN/HK EO additional 20%', cnhkEoTotal, avgRate(lineBreakdown, 'cnhkEoRate'), 'China/Hong Kong additional duty');
   if (anyCountryTotal > 0) push('+ 9903.01.25 any-country reciprocal 10%', anyCountryTotal, avgRate(lineBreakdown, 'anyCountryRate'), 'Applies to any country of origin');
-  if (vatTotal > 0) push('+ VAT', vatTotal, dest.vatRate, region !== 'US' ? `On (CIF + duty) — ${dest.countryName} standard rate` : undefined);
+  if (vatTotal > 0) push(region === 'AU' ? '+ GST (Goods & Services Tax)' : '+ VAT', vatTotal, dest.vatRate, region !== 'US' ? `On (CIF + duty) — ${dest.countryName} ${region === 'AU' ? 'GST' : 'standard rate'}` : undefined);
   if (mpfTotal > 0) push('+ MPF (Merchandise Processing Fee)', mpfTotal, rule.mpfRate, 'US 0.3464%, floored/capped');
   if (hmfTotal > 0) push('+ HMF (Harbor Maintenance Fee)', hmfTotal, rule.hmfRate, 'US ocean 0.125% (not assessed for rail/air)');
   if (region === 'US' && !hmfApplies) waterfall.push({ label: '– HMF not assessed', amount: 0, cumulative: cum, note: `${mode} mode — HMF is ocean-only (19 U.S.C. §4462)` });
+  if (region === 'AU' && ipcTotal > 0) push('+ Import Processing Charge (IPC)', ipcTotal, undefined, `ABF flat A$${ipcTotal} (≥ A$10,000 formal entry)`);
   if (otherLeviesTotal > 0) push('+ Other levies', otherLeviesTotal);
   if (customsBrokerFee) push('+ Customs broker fee', x(customsBrokerFee));
   if (documentationFee) push('+ Documentation fee', x(documentationFee));

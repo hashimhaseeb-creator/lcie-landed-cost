@@ -357,3 +357,34 @@ Verification (Agent Browser + VLM):
 
 Stage Summary:
 - The LCIE engine's US duty model now mirrors the real 2025 CBP Chapter-99 structure (9903.88.01 China 25% + 9903.01.24 CN/HK 20% + 9903.01.25 any-country 10% + MPF, with HMF conditional on ocean mode). The new CBP entry comparison panel validates the modelled duty stack against a filed Form 7501 side-by-side, with Match/Rate✓/Diff badges and reconciliation notes — confirming the engine matches the actual customs entry's duty structure.
+
+---
+Task ID: 15
+Agent: orchestrator (main)
+Task: Add Australia as a full destination region with the Australian Border Force (ABF) customs duty stack.
+
+Australian customs rules modelled:
+- Customs Duty (General/MFN) on the customs value (CIF = transaction value + freight + insurance + other). Most consumer goods incl. water filters (8421.21.00.90) carry a FREE (0%) General rate.
+- Goods & Services Tax (GST) 10% on (customs value + duty + other taxable charges) — equivalent to VAT on (CIF + duty).
+- Import Processing Charge (IPC): a FLAT AUD 50 for formal entries (consignments ≥ AUD 10,000), AUD 40 between AUD 1,000–10,000, no charge for low-value (< AUD 1,000, SAC).
+- NO US equivalents — no Section 301 / 9903.xx.xx / MPF / HMF. (WET, LCT, excise are goods-specific and out of scope.)
+
+Implementation:
+- types.ts: Region += 'AU'.
+- hs-knowledge-base.ts: DutyRule += ipcFlat/ipcFlatLow fields; DUTY_RULES.AU added (GST 10%, IPC AUD 50/40, duty on CIF, GST on CIF+duty); HsCodeEntry.au? optional field added; AU data (8421.21.00.90, FREE, GST 10%) added to both water-filter entries.
+- destination.ts: AU → region 'AU' (currency AUD, GST 10%).
+- calculator.ts: AU reuses the UK/EU CIF+VAT logic (duty on CIF, GST 10% on CIF+duty via vatRate); adds the flat IPC (AUD 50/40/0 based on subtotal) to the total + waterfall "+ Import Processing Charge (IPC) A$50"; FX-converts to AUD; waterfall label "+ GST (Goods & Services Tax)" for AU.
+- agent.ts: system prompt now lists AU + the AU rules (GST 10%, flat IPC, no Chapter-99/MPF/HMF); response shape includes an "au" field; buildUserPrompt grounding includes the `au` candidate data; sanitizeRegion handles AU (additionalLevies null); LLM-parsed fbRegional uses fb.au (falls back to fb.eu); KB-fallback uses fb.au and stores gstRate + ipcFlat.
+- sample-po.ts: added an "AU Water Filtration" sample (CN → AU, water filters, USD PO → AUD dest) to exercise the AU flow.
+- page.tsx: RegionCard description for AU ("Duty on CIF · GST 10% on (CIF + duty) · IPC A$50 flat"); per-line table VAT column header shows "GST" for AU.
+
+Verification (Agent Browser + VLM):
+- Loaded the AU Water Filtration sample (CN → AU, 4 water-filter items, USD PO). Ran the agent (22s). Results:
+    dest: → 🇦🇺 Australia; live FX 1 USD = A$1.40 (ECB, 2026-09-16); total A$161,128.86 in AUD; effective 14.29%.
+    Waterfall: FOB A$140,981 → CIF A$146,435 → +GST 10% A$14,644 → +Import Processing Charge A$50 → =Total A$161,129.
+    No Section 301 / no MPF / no HMF in the stack (correct — US-only). HS code 8421.21.00.90 (duty-free General rate).
+- VLM confirms: destination Australia (AU, AUD) with live FX, GST + flat IPC in the waterfall, no US levies.
+- Lint clean. No runtime errors.
+
+Stage Summary:
+- Australia is now a full destination region. A PO destined for AU classifies under the ABF tariff (8421.21.00.90 for water filters, duty-free General rate), and the landed-cost engine computes the correct Australian stack: GST 10% on (CIF + duty) + flat Import Processing Charge A$50, FX-converted to AUD via live ECB rates, with no US Chapter-99/MPF/HMF equivalents.
