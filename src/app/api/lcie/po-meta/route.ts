@@ -18,7 +18,7 @@ export async function PATCH(req: Request) {
     const body = await req.json() as { poId?: string; originCountry?: string; destinationCountry?: string; incoterm?: string };
     if (!body.poId) return NextResponse.json({ error: 'poId required' }, { status: 400 });
 
-    const data: { originCountry?: string; destinationCountry?: string; incoterm?: string } = {};
+    const data: { originCountry?: string | null; destinationCountry?: string | null; incoterm?: string | null } = {};
     if (typeof body.originCountry === 'string') data.originCountry = body.originCountry.toUpperCase() || null;
     if (typeof body.destinationCountry === 'string') data.destinationCountry = body.destinationCountry.toUpperCase() || null;
     if (typeof body.incoterm === 'string') data.incoterm = body.incoterm.toUpperCase() || null;
