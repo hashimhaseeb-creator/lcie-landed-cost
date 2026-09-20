@@ -245,7 +245,7 @@ function parsePlainText(text: string): { items: LineItemInput[]; meta: Partial<P
     if (oth) { meta.otherCharges = (meta.otherCharges ?? 0) + num(oth[1]); consumedFreight = true; }
     // a pure header line (supplier, origin-only, freight-only) is fully consumed
     if (consumedFreight) return true;
-    return inc || cur || orig || dest ? true : false;
+    return !!(cur || orig || dest);
   };
 
   const items: LineItemInput[] = [];
@@ -538,8 +538,11 @@ export function parsePoPayload(
     destinationCountry: meta?.destinationCountry ?? extractedMeta.destinationCountry ?? undefined,
     currency: meta?.currency ?? extractedMeta.currency ?? 'USD',
     incoterm: meta?.incoterm ?? extractedMeta.incoterm ?? undefined,
-    // expose the inference provenance so the UI can show "inferred from supplier city 'Shenzhen'"
-    _inference: { incotermInferred, originInferred } as unknown as never,
+    // NOTE: inference provenance (incotermInferred, originInferred) is computed
+    // locally and logged on the server; not exposed on the returned PoInput
+    // shape because the type is strict. If the UI later needs to surface
+    // "inferred from supplier city 'Shenzhen'", add an optional field to the
+    // PoInput type.
     freight: meta?.freight ?? (extractedMeta.freight as number) ?? 0,
     insurance: meta?.insurance ?? (extractedMeta.insurance as number) ?? 0,
     otherCharges: meta?.otherCharges ?? (extractedMeta.otherCharges as number) ?? 0,
