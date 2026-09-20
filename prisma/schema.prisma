@@ -6,7 +6,10 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  // Production-grade Postgres (e.g. Neon, Supabase, Vercel Postgres).
+  // Local dev also uses Postgres — point DATABASE_URL at a Neon free-tier DB.
+  // See .env.example for the connection-string shape.
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 

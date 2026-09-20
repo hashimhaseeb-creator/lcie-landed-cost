@@ -261,9 +261,21 @@ export async function determineHsCodesForPo(poId: string): Promise<DetermineResp
 
   // Init the LLM SDK — if it fails (auth, network, rate-limit at init), the
   // agent continues in pure knowledge-base mode.
+  //
+  // Two init paths:
+  //   • Vercel / production: ZAI_API_KEY env var is set → use Reflect.construct
+  //     to bypass the TS-private constructor and instantiate directly from
+  //     env-var config (Vercel serverless has no writable filesystem for the
+  //     SDK's file-based auto-discovery).
+  //   • Local dev: env var unset → fall back to ZAI.create() which auto-reads
+  //     `./.z-ai-config` or `~/.z-ai-config`.
   let zai: ZAI | null = null;
   try {
-    zai = await ZAI.create();
+    const apiKey = process.env.ZAI_API_KEY?.trim();
+    const baseUrl = process.env.ZAI_BASE_URL?.trim() || 'https://api.z.ai/api/v1';
+    zai = apiKey
+      ? (Reflect.construct(ZAI, [{ baseUrl, apiKey }]) as ZAI)
+      : await ZAI.create();
   } catch (e) {
     pushStep({ lineItemId: '', description: `LLM SDK init failed (${(e as Error).message}) — continuing in KB-only mode`, status: 'error' });
   }
