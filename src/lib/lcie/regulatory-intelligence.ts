@@ -284,8 +284,7 @@ export async function forceRefresh(): Promise<RateSnapshot> {
 
   for (const q of VERIFY_QUERIES) {
     try {
-      // @ts-expect-error: z-ai-web-dev-sdk's functions.invoke signature is loose
-      const results = (await zai.functions.invoke('web_search', { query: q.query, num: 5 })) as
+      const results = (await (zai as unknown as { functions: { invoke: (name: string, args: unknown) => Promise<unknown> } }).functions.invoke('web_search', { query: q.query, num: 5 })) as
         | { snippet?: string; date?: string; url?: string; name?: string }[]
         | null;
       if (!Array.isArray(results) || results.length === 0) continue;
