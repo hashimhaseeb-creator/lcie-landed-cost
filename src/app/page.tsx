@@ -223,22 +223,22 @@ export default function Home() {
   return (
     <div className="min-h-screen flex flex-col bg-background gp4-hero-glow">
       {/* ===== Header (sticky) ===== */}
-      <header className="sticky top-0 z-50 w-full border-b border-cyan-200/50 dark:border-cyan-900/40 bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+      <header className="sticky top-0 z-50 w-full border-b border-emerald-200/50 dark:border-emerald-900/40 bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
         <div className="container mx-auto px-4 h-16 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="relative shrink-0"><Gp4Logo size={38} /><span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-cyan-400 gp4-pulse" /></div>
+            <div className="relative shrink-0"><Gp4Logo size={52} /><span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-emerald-400 gp4-pulse" /></div>
             <div className="min-w-0 leading-tight">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-300 font-semibold">{BRAND} <span className="text-muted-foreground font-normal">Global Operations</span></p>
+              <p className="text-[11px] uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300 font-semibold">{BRAND} <span className="text-muted-foreground font-normal">Global Operations</span></p>
               <h1 className="text-sm md:text-base font-bold font-display truncate">LCIE Landed Cost Engine</h1>
             </div>
           </div>
           <nav className="hidden lg:flex items-center gap-1">
             {NAV.map((n) => (
-              <span key={n.label} className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${n.active ? 'bg-cyan-600 text-white' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}>{n.label}</span>
+              <span key={n.label} className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${n.active ? 'bg-emerald-600 text-white' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}>{n.label}</span>
             ))}
           </nav>
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className="hidden sm:inline-flex border-cyan-300/60 text-cyan-700 dark:text-cyan-300 dark:border-cyan-800/60 gap-1"><Cpu className="h-3 w-3" /> Agent online</Badge>
+            <Badge variant="outline" className="hidden sm:inline-flex border-emerald-300/60 text-emerald-700 dark:text-emerald-300 dark:border-emerald-800/60 gap-1"><Cpu className="h-3 w-3" /> Agent online</Badge>
             <Button variant="outline" size="icon" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle theme">{mounted && theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}</Button>
           </div>
         </div>
@@ -248,10 +248,10 @@ export default function Home() {
         {/* ===== Hero ===== */}
         <section className="container mx-auto px-4 pt-10 pb-6">
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} className="max-w-3xl">
-            <Badge variant="secondary" className="mb-3 border-cyan-200/60 dark:border-cyan-900/40 text-cyan-700 dark:text-cyan-300"><Sparkles className="h-3 w-3 mr-1" /> {FRAMEWORK} — a decision sequence, not a product category</Badge>
+            <Badge variant="secondary" className="mb-3 border-emerald-200/60 dark:border-emerald-900/40 text-emerald-700 dark:text-emerald-300"><Sparkles className="h-3 w-3 mr-1" /> {FRAMEWORK} — a decision sequence, not a product category</Badge>
             <h2 className="text-3xl md:text-4xl font-bold tracking-tight leading-tight font-display">
               LCIE Landed Cost Engine
-              <span className="block text-cyan-600 dark:text-cyan-400">destination-aware duty stack with live FX</span>
+              <span className="block text-emerald-600 dark:text-emerald-400">destination-aware duty stack with live FX</span>
             </h2>
             <p className="mt-3 text-muted-foreground text-base md:text-lg max-w-2xl">
               Upload a PO and the agent determines the HS code &amp; full regulation stack — <strong className="text-foreground">Section 301, IEEPA, MPF, HMF, VAT</strong> — for <strong className="text-foreground">only the final destined country</strong>. US destinations settle in US$; UK in £, EU in € (or member currency) via <strong className="text-foreground">live ECB FX rates</strong>. You set freight, insurance &amp; every import charge.
@@ -264,7 +264,7 @@ export default function Home() {
                 { icon: Wallet, label: 'Editable import charges' },
                 { icon: ShieldCheck, label: 'Auditable waterfall' },
               ].map((f) => (
-                <Badge key={f.label} variant="outline" className="gap-1.5 py-1.5 px-3 rounded-full border-cyan-200/60 dark:border-cyan-900/40"><f.icon className="h-3.5 w-3.5 text-cyan-600 dark:text-cyan-400" /> {f.label}</Badge>
+                <Badge key={f.label} variant="outline" className="gap-1.5 py-1.5 px-3 rounded-full border-emerald-200/60 dark:border-emerald-900/40"><f.icon className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> {f.label}</Badge>
               ))}
             </div>
           </motion.div>
@@ -274,24 +274,31 @@ export default function Home() {
         <section ref={workspaceRef} className="container mx-auto px-4 pb-12 space-y-6">
           {/* Upload card */}
           {!po && (
-            <Card className="border-cyan-200/60 dark:border-cyan-900/40 overflow-hidden">
-              <CardHeader className="bg-cyan-50/60 dark:bg-cyan-950/20 border-b border-cyan-100 dark:border-cyan-900/30">
-                <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5 text-cyan-600 dark:text-cyan-400" /> Upload a Purchase Order</CardTitle>
+            <>
+            <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/60 dark:bg-amber-950/15 p-3 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                <strong>Important:</strong> Include full product descriptions (not just SKU/Part Numbers) in your PO for accurate HS classification. Vague codes like <code className="font-mono bg-amber-100/60 dark:bg-amber-950/30 px-1 rounded">"9801-4"</code> may be misclassified — use <code className="font-mono bg-amber-100/60 dark:bg-amber-950/30 px-1 rounded">"10-inch sediment water filter cartridge"</code> instead.
+              </p>
+            </div>
+            <Card className="border-emerald-200/60 dark:border-emerald-900/40 overflow-hidden">
+              <CardHeader className="bg-emerald-50/60 dark:bg-emerald-950/20 border-b border-emerald-100 dark:border-emerald-900/30">
+                <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5 text-emerald-600 dark:text-emerald-400" /> Upload a Purchase Order</CardTitle>
                 <CardDescription>Drop a <strong>PDF</strong>, CSV, JSON or text PO, paste PO lines, or load a sample consignment to begin.</CardDescription>
               </CardHeader>
               <CardContent className="p-6">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div>
                     <div onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }} onClick={() => fileInputRef.current?.click()}
-                      className={`cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors ${dragOver ? 'border-cyan-500 bg-cyan-50/60' : 'border-cyan-200 dark:border-cyan-900/50 hover:border-cyan-500/60 hover:bg-cyan-50/40 dark:hover:bg-cyan-950/20'}`}>
+                      className={`cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors ${dragOver ? 'border-emerald-500 bg-emerald-50/60' : 'border-emerald-200 dark:border-emerald-900/50 hover:border-emerald-500/60 hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20'}`}>
                       <input ref={fileInputRef} type="file" accept=".csv,.json,.txt,.xml,.pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
-                      <div className="mx-auto h-12 w-12 rounded-full bg-cyan-600/10 grid place-items-center mb-3">{uploading ? <Loader2 className="h-6 w-6 text-cyan-600 animate-spin" /> : <FileText className="h-6 w-6 text-cyan-600 dark:text-cyan-400" />}</div>
+                      <div className="mx-auto h-12 w-12 rounded-full bg-emerald-600/10 grid place-items-center mb-3">{uploading ? <Loader2 className="h-6 w-6 text-emerald-600 animate-spin" /> : <FileText className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />}</div>
                       <p className="font-medium">{uploading ? 'Parsing PO…' : 'Drop PO file here or click to browse'}</p>
-                      <p className="text-xs text-muted-foreground mt-1"><span className="text-cyan-700 dark:text-cyan-300 font-medium">PDF</span> · CSV · JSON · text — auto-detects format &amp; columns</p>
+                      <p className="text-xs text-muted-foreground mt-1"><span className="text-emerald-700 dark:text-emerald-300 font-medium">PDF</span> · CSV · JSON · text — auto-detects format &amp; columns</p>
                     </div>
                   </div>
                   <div className="flex flex-col">
-                    <label className="text-sm font-medium mb-1.5 flex items-center gap-1.5"><Boxes className="h-4 w-4 text-cyan-600 dark:text-cyan-400" /> Paste PO line items</label>
+                    <label className="text-sm font-medium mb-1.5 flex items-center gap-1.5"><Boxes className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> Paste PO line items</label>
                     <Textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder={`1. Cotton knit T-shirt, 220gsm — 5000 pcs @ $3.20\n2. Leather handbag, cowhide — 800 pcs @ $18.50`} className="flex-1 min-h-[140px] font-mono text-xs lcie-scroll" />
                     <Button onClick={handlePaste} disabled={!pasteText.trim() || uploading} className="mt-2 self-end" size="sm">{uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />} Parse &amp; load</Button>
                   </div>
@@ -299,13 +306,13 @@ export default function Home() {
                 {samples.length > 0 && (
                   <div className="mt-6">
                     <Separator className="mb-4" />
-                    <p className="text-sm font-medium mb-2 flex items-center gap-1.5"><Boxes className="h-4 w-4 text-cyan-600 dark:text-cyan-400" /> Or load a sample consignment</p>
+                    <p className="text-sm font-medium mb-2 flex items-center gap-1.5"><Boxes className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> Or load a sample consignment</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       {samples.map((s) => (
-                        <button key={s.id} onClick={() => handleLoadSample(s.id)} disabled={uploading} className="text-left rounded-lg border border-cyan-200/70 dark:border-cyan-900/40 bg-card hover:bg-cyan-50/50 dark:hover:bg-cyan-950/20 hover:border-cyan-500/50 p-3 transition-colors disabled:opacity-60">
+                        <button key={s.id} onClick={() => handleLoadSample(s.id)} disabled={uploading} className="text-left rounded-lg border border-emerald-200/70 dark:border-emerald-900/40 bg-card hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 hover:border-emerald-500/50 p-3 transition-colors disabled:opacity-60">
                           <p className="text-sm font-medium leading-tight">{s.title}</p>
                           <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{s.blurb}</p>
-                          <p className="text-[11px] text-cyan-700 dark:text-cyan-300 mt-2 flex items-center gap-1">{s.lineCount} line items <ChevronRight className="h-3 w-3" /></p>
+                          <p className="text-[11px] text-emerald-700 dark:text-emerald-300 mt-2 flex items-center gap-1">{s.lineCount} line items <ChevronRight className="h-3 w-3" /></p>
                         </button>
                       ))}
                     </div>
@@ -314,16 +321,17 @@ export default function Home() {
                 {error && (<div className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm"><AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" /><p className="text-destructive">{error}</p></div>)}
               </CardContent>
             </Card>
+            </>
           )}
 
           {/* PO + line items + landed-cost inputs */}
           {po && (
             <>
-              <Card className="border-cyan-200/60 dark:border-cyan-900/40">
+              <Card className="border-emerald-200/60 dark:border-emerald-900/40">
                 <CardHeader className="pb-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5 text-cyan-600 dark:text-cyan-400" /> {po.poNumber}</CardTitle>
+                      <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5 text-emerald-600 dark:text-emerald-400" /> {po.poNumber}</CardTitle>
                       <CardDescription className="mt-1">{po.supplier ? `${po.supplier} · ` : ''}{po.originCountry ?? '—'} → {po.destinationCountry ?? '—'} · {po.incoterm ?? 'FOB'} · {po.currency}</CardDescription>
                     </div>
                     <div className="flex items-center gap-2">
@@ -357,9 +365,9 @@ export default function Home() {
                       </Table>
                     </ScrollArea>
                   </div>
-                  <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-t bg-cyan-50/40 dark:bg-cyan-950/15">
+                  <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-t bg-emerald-50/40 dark:bg-emerald-950/15">
                     <span className="text-sm text-muted-foreground">FOB subtotal</span>
-                    <span className="font-mono font-semibold text-lg text-cyan-700 dark:text-cyan-300">{fmtMoney(po.lineItems.reduce((s, l) => s + l.totalValue, 0), po.currency)}</span>
+                    <span className="font-mono font-semibold text-lg text-emerald-700 dark:text-emerald-300">{fmtMoney(po.lineItems.reduce((s, l) => s + l.totalValue, 0), po.currency)}</span>
                   </div>
                 </CardContent>
                 <CardFooter className="border-t bg-muted/30 p-4 flex flex-wrap items-center justify-between gap-3">
@@ -377,10 +385,10 @@ export default function Home() {
           <AnimatePresence>
             {(agentLoading || visibleSteps.length > 0) && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-                <Card className="border-cyan-200/60 dark:border-cyan-900/40">
+                <Card className="border-emerald-200/60 dark:border-emerald-900/40">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
-                      <div><CardTitle className="flex items-center gap-2"><Cpu className="h-5 w-5 text-cyan-600 dark:text-cyan-400" /> LCIE Agent — live trace</CardTitle><CardDescription>Grounding · LLM classification · parsing · storage.</CardDescription></div>
+                      <div><CardTitle className="flex items-center gap-2"><Cpu className="h-5 w-5 text-emerald-600 dark:text-emerald-400" /> LCIE Agent — live trace</CardTitle><CardDescription>Grounding · LLM classification · parsing · storage.</CardDescription></div>
                       {agentResult && <Badge variant="outline" className="gap-1"><Database className="h-3 w-3" /> {agentResult.model} · {(agentResult.durationMs / 1000).toFixed(1)}s</Badge>}
                     </div>
                   </CardHeader>
@@ -389,11 +397,11 @@ export default function Home() {
                       <ul className="divide-y">
                         {visibleSteps.map((s) => (
                           <li key={s.step} className="flex items-start gap-3 p-3 text-sm">
-                            <span className={`mt-0.5 h-5 w-5 rounded-full grid place-items-center shrink-0 ${s.status === 'error' ? 'bg-destructive/15 text-destructive' : s.status === 'stored' ? 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400' : s.status === 'llm_call' ? 'bg-cyan-600/15 text-cyan-600 dark:text-cyan-400' : 'bg-muted text-muted-foreground'}`}>{s.status === 'stored' ? <CheckCircle2 className="h-3 w-3" /> : s.status === 'error' ? <AlertTriangle className="h-3 w-3" /> : s.status === 'llm_call' ? <Brain className="h-3 w-3" /> : <ScanLine className="h-3 w-3" />}</span>
+                            <span className={`mt-0.5 h-5 w-5 rounded-full grid place-items-center shrink-0 ${s.status === 'error' ? 'bg-destructive/15 text-destructive' : s.status === 'stored' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : s.status === 'llm_call' ? 'bg-emerald-600/15 text-emerald-600 dark:text-emerald-400' : 'bg-muted text-muted-foreground'}`}>{s.status === 'stored' ? <CheckCircle2 className="h-3 w-3" /> : s.status === 'error' ? <AlertTriangle className="h-3 w-3" /> : s.status === 'llm_call' ? <Brain className="h-3 w-3" /> : <ScanLine className="h-3 w-3" />}</span>
                             <div className="min-w-0 flex-1"><p className="font-medium leading-tight">{s.description}</p>{s.detail && <p className="text-xs text-muted-foreground mt-0.5">{s.detail}</p>}<p className="text-[10px] text-muted-foreground mt-0.5 font-mono">{new Date(s.ts).toLocaleTimeString()} · {s.status}</p></div>
                           </li>
                         ))}
-                        {agentLoading && (<li className="flex items-center gap-3 p-3 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin text-cyan-600" /> awaiting next step…</li>)}
+                        {agentLoading && (<li className="flex items-center gap-3 p-3 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin text-emerald-600" /> awaiting next step…</li>)}
                       </ul>
                     </div>
                     {agentLoading && <div className="h-1 w-full gp4-flow-bar" />}
@@ -423,17 +431,17 @@ export default function Home() {
       </main>
 
       {/* ===== Footer (sticky to bottom) ===== */}
-      <footer className="mt-auto border-t border-cyan-200/50 dark:border-cyan-900/40 bg-cyan-50/50 dark:bg-cyan-950/20">
+      <footer className="mt-auto border-t border-emerald-200/50 dark:border-emerald-900/40 bg-emerald-50/50 dark:bg-emerald-950/20">
         <div className="container mx-auto px-4 py-8">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
             <div className="md:col-span-2">
-              <div className="flex items-center gap-3 mb-3"><Gp4Logo size={36} /><div className="leading-tight"><p className="font-bold font-display text-sm">{BRAND_FULL}</p><p className="text-xs text-muted-foreground">Hydrogen Systems &amp; Supply Chain Framework</p></div></div>
+              <div className="flex items-center gap-3 mb-3"><Gp4Logo size={48} /><div className="leading-tight"><p className="font-bold font-display text-sm">{BRAND_FULL}</p><p className="text-xs text-muted-foreground">Hydrogen Systems &amp; Supply Chain Framework</p></div></div>
               <p className="text-xs text-muted-foreground max-w-md leading-relaxed">Hydrogen hardware, pharmacology-grade wellness intelligence, and forensic landed-cost engineering — merged into one executive control deck.</p>
-              <Button variant="outline" size="sm" className="mt-3 gap-1.5 border-cyan-300/60 text-cyan-700 dark:text-cyan-300 dark:border-cyan-800/60 hover:bg-cyan-50 dark:hover:bg-cyan-950/40"><Truck className="h-3.5 w-3.5" /> Schedule an Enterprise Green Audit</Button>
+              <Button variant="outline" size="sm" className="mt-3 gap-1.5 border-emerald-300/60 text-emerald-700 dark:text-emerald-300 dark:border-emerald-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"><Truck className="h-3.5 w-3.5" /> Schedule an Enterprise Green Audit</Button>
             </div>
             <div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Live Engines</p>
               <ul className="space-y-1.5 text-xs">
-                <li className="flex items-center gap-1.5 text-cyan-700 dark:text-cyan-300"><span className="h-1.5 w-1.5 rounded-full bg-cyan-500" /> LCIE Landed Cost Engine</li>
+                <li className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> LCIE Landed Cost Engine</li>
                 <li className="flex items-center gap-1.5 text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" /> H₂ Protocol &amp; Usage Tool</li>
                 <li className="flex items-center gap-1.5 text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" /> ICE Fleet Savings Engine</li>
               </ul>
@@ -449,7 +457,7 @@ export default function Home() {
           <p className="text-[11px] text-muted-foreground leading-relaxed"><strong className="text-foreground">Financial disclaimer:</strong> landed-cost outputs are modelled estimates; FX rates are ECB reference rates (daily); Section 301 / IEEPA rates are subject to executive action and change without notice. Actual results depend on the HTS subheading, country of origin, tariff programme eligibility, and the importer's facts.</p>
           <div className="mt-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-muted-foreground">
             <span>© 2026 {BRAND_FULL}. All rights reserved. {BRAND} is a trademark of its owner.</span>
-            <span className="flex items-center gap-1.5"><ShieldCheck className="h-3 w-3 text-cyan-600" /> MFN / Column 1 rates · modelled for demonstration</span>
+            <span className="flex items-center gap-1.5"><ShieldCheck className="h-3 w-3 text-emerald-600" /> MFN / Column 1 rates · modelled for demonstration</span>
           </div>
         </div>
       </footer>
@@ -482,16 +490,16 @@ function LandedCostInputsForm({
     { key: 'inlandDestinationDelivery', label: 'Inland delivery', icon: MapPin, hint: 'Port → final DC' },
   ];
   return (
-    <Card className="border-cyan-200/60 dark:border-cyan-900/40">
+    <Card className="border-emerald-200/60 dark:border-emerald-900/40">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base"><Wallet className="h-4 w-4 text-cyan-600 dark:text-cyan-400" /> Landed-cost inputs</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-base"><Wallet className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> Landed-cost inputs</CardTitle>
         <CardDescription>Enter every import charge that touches this shipment — all in the PO currency ({currency}). The duty stack recalculates instantly.</CardDescription>
       </CardHeader>
       <CardContent className="p-4">
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {fields.map((f) => (
             <div key={f.key}>
-              <Label className="text-xs flex items-center gap-1 mb-1"><f.icon className="h-3 w-3 text-cyan-600 dark:text-cyan-400" /> {f.label}</Label>
+              <Label className="text-xs flex items-center gap-1 mb-1"><f.icon className="h-3 w-3 text-emerald-600 dark:text-emerald-400" /> {f.label}</Label>
               <TooltipProvider delayDuration={200}><Tooltip><TooltipTrigger asChild><Input type="number" min="0" step="0.01" value={inputs[f.key] ?? ''} onChange={(e) => set(f.key, e.target.value)} className="font-mono text-sm" placeholder="0.00" /></TooltipTrigger><TooltipContent><p className="max-w-[200px] text-xs">{f.hint}</p></TooltipContent></Tooltip></TooltipProvider>
             </div>
           ))}
@@ -505,7 +513,7 @@ function LandedCostInputsForm({
               key={mode}
               type="button"
               onClick={() => setInputs({ ...inputs, modeOfTransport: mode })}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${(inputs.modeOfTransport ?? 'Ocean') === mode ? 'bg-cyan-600 text-white' : 'bg-muted text-muted-foreground hover:bg-cyan-50/60 dark:hover:bg-cyan-950/30'}`}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${(inputs.modeOfTransport ?? 'Ocean') === mode ? 'bg-emerald-600 text-white' : 'bg-muted text-muted-foreground hover:bg-emerald-50/60 dark:hover:bg-emerald-950/30'}`}
             >
               {mode}
             </button>
@@ -544,18 +552,18 @@ function ResultsDashboard({
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="space-y-6">
       {/* Destination header + FX */}
-      <Card className="border-cyan-200/60 dark:border-cyan-900/40">
+      <Card className="border-emerald-200/60 dark:border-emerald-900/40">
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <CardTitle className="flex items-center gap-2"><Calculator className="h-5 w-5 text-cyan-600 dark:text-cyan-400" /> Landed cost — {calc.poNumber} → {calc.destination.flag} {calc.destination.countryName}</CardTitle>
+              <CardTitle className="flex items-center gap-2"><Calculator className="h-5 w-5 text-emerald-600 dark:text-emerald-400" /> Landed cost — {calc.poNumber} → {calc.destination.flag} {calc.destination.countryName}</CardTitle>
               <CardDescription>Duty stack for the final destination only · {c.region === 'US' ? 'HTS' : c.region === 'UK' ? 'UK Global Tariff' : 'EU TARIC'} classification · {c.notes.split('.')[0]}.</CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {fx ? (
-                <TooltipProvider><Tooltip><TooltipTrigger asChild><Badge className="gap-1 bg-cyan-600 hover:bg-cyan-600 text-white"><TrendingUp className="h-3.5 w-3.5" /> {sym(calc.originCurrency)}1 = {fmtMoney(fx.rate, calc.destination.currency)}</Badge></TooltipTrigger><TooltipContent><p className="text-xs">Live {fx.source === 'frankfurter' ? 'ECB reference' : fx.source} rate · {fx.date}<br/>{calc.originCurrency} → {calc.destination.currency} · fetched {new Date(fx.fetchedAt).toLocaleTimeString()}</p></TooltipContent></Tooltip></TooltipProvider>
+                <TooltipProvider><Tooltip><TooltipTrigger asChild><Badge className="gap-1 bg-emerald-600 hover:bg-emerald-600 text-white"><TrendingUp className="h-3.5 w-3.5" /> {sym(calc.originCurrency)}1 = {fmtMoney(fx.rate, calc.destination.currency)}</Badge></TooltipTrigger><TooltipContent><p className="text-xs">Live {fx.source === 'frankfurter' ? 'ECB reference' : fx.source} rate · {fx.date}<br/>{calc.originCurrency} → {calc.destination.currency} · fetched {new Date(fx.fetchedAt).toLocaleTimeString()}</p></TooltipContent></Tooltip></TooltipProvider>
               ) : (
-                <Badge variant="outline" className="gap-1 border-cyan-300/60 text-cyan-700 dark:text-cyan-300"><Globe2 className="h-3.5 w-3.5" /> {calc.destination.currency} (no FX — PO already in destination currency)</Badge>
+                <Badge variant="outline" className="gap-1 border-emerald-300/60 text-emerald-700 dark:text-emerald-300"><Globe2 className="h-3.5 w-3.5" /> {calc.destination.currency} (no FX — PO already in destination currency)</Badge>
               )}
               <Button variant="outline" size="sm" onClick={onDownload} className="gap-1"><Download className="h-3.5 w-3.5" /> Export JSON</Button>
             </div>
@@ -563,7 +571,7 @@ function ResultsDashboard({
         </CardHeader>
         <CardContent className="p-4">
           {fx && (
-            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg bg-cyan-50/60 dark:bg-cyan-950/20 border border-cyan-200/50 dark:border-cyan-900/40 p-2.5 text-xs">
+            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200/50 dark:border-emerald-900/40 p-2.5 text-xs">
               <span className="text-muted-foreground">Live FX:</span>
               <span className="font-mono font-medium">{fmtMoney(1, calc.originCurrency)} {calc.originCurrency} = {fmtMoney(fx.rate, calc.destination.currency)} {calc.destination.currency}</span>
               <span className="text-muted-foreground">·</span>
@@ -580,9 +588,9 @@ function ResultsDashboard({
       <RegionCard calc={c} dets={dets} originCurrency={calc.originCurrency} fxRate={fx?.rate ?? 1} />
 
       {/* Per-line determination + reasoning */}
-      <Card className="border-cyan-200/60 dark:border-cyan-900/40">
+      <Card className="border-emerald-200/60 dark:border-emerald-900/40">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2"><ScanLine className="h-4 w-4 text-cyan-600 dark:text-cyan-400" /> Per-line HS determination &amp; duty stack</CardTitle>
+          <CardTitle className="text-base flex items-center gap-2"><ScanLine className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> Per-line HS determination &amp; duty stack</CardTitle>
           <CardDescription>What the LCIE agent classified for every line — HS code, duty rate, Section 301 / IEEPA (US only), VAT, and reasoning, all in {c.currency}.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -611,7 +619,7 @@ function ResultsDashboard({
                     {c.region === 'US' && <TableCell className="text-right font-mono text-xs text-amber-600 dark:text-amber-400">{fmtPct(lb.anyCountryRate)}</TableCell>}
                     {c.region !== 'US' && <TableCell className="text-right font-mono text-xs">{fmtPct(lb.vatRate)}</TableCell>}
                     <TableCell className="text-right font-mono text-xs font-medium">{fmtMoney(lb.lineLandedCost, c.currency)}</TableCell>
-                    <TableCell><div className="flex items-center gap-1.5"><Progress value={lb.confidence * 100} className="h-1.5 w-10 [&>div]:bg-cyan-500" /><span className="text-[10px] text-muted-foreground">{Math.round(lb.confidence * 100)}%</span></div></TableCell>
+                    <TableCell><div className="flex items-center gap-1.5"><Progress value={lb.confidence * 100} className="h-1.5 w-10 [&>div]:bg-emerald-500" /><span className="text-[10px] text-muted-foreground">{Math.round(lb.confidence * 100)}%</span></div></TableCell>
                     <TableCell className="text-xs text-muted-foreground leading-snug">{lb.reasoning ?? '—'}</TableCell>
                   </TableRow>
                 ))}
@@ -644,8 +652,8 @@ function CbpComparisonPanel({
   // build the LCIE engine's duty stack summary (only meaningful for US — CBP Form 7501 is US)
   if (calc.region !== 'US') {
     return (
-      <Card className="border-cyan-200/60 dark:border-cyan-900/40">
-        <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><FileCheck className="h-4 w-4 text-cyan-600" /> Compare with a CBP entry</CardTitle></CardHeader>
+      <Card className="border-emerald-200/60 dark:border-emerald-900/40">
+        <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><FileCheck className="h-4 w-4 text-emerald-600" /> Compare with a CBP entry</CardTitle></CardHeader>
         <CardContent className="text-sm text-muted-foreground py-4">CBP Form 7501 comparison is available for US-destination shipments only.</CardContent>
       </Card>
     );
@@ -664,11 +672,11 @@ function CbpComparisonPanel({
   const cbpProvisions = cbpEntry ? aggregateCbp(cbpEntry) : [];
 
   return (
-    <Card className="border-cyan-200/60 dark:border-cyan-900/40">
+    <Card className="border-emerald-200/60 dark:border-emerald-900/40">
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <CardTitle className="text-base flex items-center gap-2"><FileCheck className="h-4 w-4 text-cyan-600 dark:text-cyan-400" /> Compare with a CBP Customs Entry (Form 7501)</CardTitle>
+            <CardTitle className="text-base flex items-center gap-2"><FileCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> Compare with a CBP Customs Entry (Form 7501)</CardTitle>
             <CardDescription>Validate the LCIE engine&apos;s duty stack against the actual filed entry — ground truth.</CardDescription>
           </div>
           {cbpEntry && (
@@ -685,10 +693,10 @@ function CbpComparisonPanel({
         {!cbpEntry ? (
           <div
             onClick={() => cbpInputRef.current?.click()}
-            className="cursor-pointer rounded-lg border-2 border-dashed border-cyan-200 dark:border-cyan-900/50 p-6 text-center hover:border-cyan-500/60 hover:bg-cyan-50/40 dark:hover:bg-cyan-950/20 transition-colors"
+            className="cursor-pointer rounded-lg border-2 border-dashed border-emerald-200 dark:border-emerald-900/50 p-6 text-center hover:border-emerald-500/60 hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20 transition-colors"
           >
             <input ref={cbpInputRef} type="file" accept=".pdf,.txt" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onCompareEntry(f); }} />
-            {cbpLoading ? <Loader2 className="h-5 w-5 text-cyan-600 animate-spin mx-auto" /> : <FileCheck className="h-5 w-5 text-cyan-600 mx-auto" />}
+            {cbpLoading ? <Loader2 className="h-5 w-5 text-emerald-600 animate-spin mx-auto" /> : <FileCheck className="h-5 w-5 text-emerald-600 mx-auto" />}
             <p className="text-sm font-medium mt-2">{cbpLoading ? 'Parsing CBP entry…' : 'Drop a CBP Form 7501 duty-stack PDF here'}</p>
             <p className="text-xs text-muted-foreground mt-1">Upload the real customs entry to see the side-by-side duty-stack comparison</p>
           </div>
@@ -774,9 +782,9 @@ function CbpComparisonPanel({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-cyan-200/50 dark:border-cyan-900/40 bg-cyan-50/40 dark:bg-cyan-950/15 p-3">
+    <div className="rounded-lg border border-emerald-200/50 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-950/15 p-3">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="text-base font-bold font-mono text-cyan-700 dark:text-cyan-300">{value}</p>
+      <p className="text-base font-bold font-mono text-emerald-700 dark:text-emerald-300">{value}</p>
     </div>
   );
 }
@@ -818,7 +826,7 @@ function RegionCard({
   const avgConfidence = dets.length ? dets.reduce((s, d) => s + d.confidence, 0) / dets.length : 0;
 
   return (
-    <Card className="border-cyan-200/60 dark:border-cyan-900/40 relative overflow-hidden before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:bg-cyan-500">
+    <Card className="border-emerald-200/60 dark:border-emerald-900/40 relative overflow-hidden before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:bg-emerald-500">
       <CardHeader className="pb-2 pl-5">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base flex items-center gap-2"><span className="text-lg">{calc.flag}</span> {calc.label} — duty stack</CardTitle>
@@ -828,8 +836,8 @@ function RegionCard({
       </CardHeader>
       <CardContent className="pl-5 pb-3 pt-0">
         {/* Waterfall: step-by-step duty stack */}
-        <div className="rounded-lg border border-cyan-200/50 dark:border-cyan-900/40 overflow-hidden">
-          <div className="grid grid-cols-[1fr_auto] gap-x-3 px-3 py-2 bg-cyan-50/50 dark:bg-cyan-950/15 text-[11px] uppercase tracking-wide text-muted-foreground border-b border-cyan-200/50 dark:border-cyan-900/40">
+        <div className="rounded-lg border border-emerald-200/50 dark:border-emerald-900/40 overflow-hidden">
+          <div className="grid grid-cols-[1fr_auto] gap-x-3 px-3 py-2 bg-emerald-50/50 dark:bg-emerald-950/15 text-[11px] uppercase tracking-wide text-muted-foreground border-b border-emerald-200/50 dark:border-emerald-900/40">
             <span>Duty-stack step</span><span className="text-right">Amount ({calc.currency}) · Cumulative</span>
           </div>
           <ul className="divide-y divide-border">
@@ -839,10 +847,10 @@ function RegionCard({
               const max = calc.waterfall[calc.waterfall.length - 1]?.cumulative || 1;
               const pctW = Math.min(100, Math.max(2, (w.cumulative / max) * 100));
               return (
-                <li key={i} className={`relative px-3 py-1.5 ${isTotal ? 'bg-cyan-50/60 dark:bg-cyan-950/25 font-semibold' : ''}`}>
+                <li key={i} className={`relative px-3 py-1.5 ${isTotal ? 'bg-emerald-50/60 dark:bg-emerald-950/25 font-semibold' : ''}`}>
                   <div className="grid grid-cols-[1fr_auto] gap-x-3 items-center text-sm">
-                    <span className={`flex items-center gap-1.5 ${isTotal ? 'text-cyan-700 dark:text-cyan-300' : ''}`}>
-                      {w.label.startsWith('+') ? <ArrowRight className="h-3 w-3 text-muted-foreground" /> : isTotal ? <Calculator className="h-3 w-3 text-cyan-600" /> : null}
+                    <span className={`flex items-center gap-1.5 ${isTotal ? 'text-emerald-700 dark:text-emerald-300' : ''}`}>
+                      {w.label.startsWith('+') ? <ArrowRight className="h-3 w-3 text-muted-foreground" /> : isTotal ? <Calculator className="h-3 w-3 text-emerald-600" /> : null}
                       <span>{w.label.replace(/^[+=]\s*/, isTotal ? '' : '')}</span>
                       {w.rate !== undefined && w.rate > 0 && <Badge variant="secondary" className="ml-1 text-[10px] py-0 h-4 gap-0.5"><Percent className="h-2.5 w-2.5" />{fmtPct(w.rate)}</Badge>}
                     </span>
@@ -853,7 +861,7 @@ function RegionCard({
                   </div>
                   {!isTotal && (
                     <div className="mt-1 h-1 rounded-full bg-muted overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-cyan-500 to-teal-400" style={{ width: `${pctW}%` }} />
+                      <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-400" style={{ width: `${pctW}%` }} />
                     </div>
                   )}
                   {w.note && <p className="text-[10px] text-muted-foreground mt-0.5">{w.note}</p>}
@@ -867,7 +875,7 @@ function RegionCard({
         <div className="flex items-end justify-between">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Total landed cost</p>
-            <p className="text-2xl font-bold font-mono text-cyan-700 dark:text-cyan-300">{fmtMoney(calc.totalLandedCost, calc.currency)}</p>
+            <p className="text-2xl font-bold font-mono text-emerald-700 dark:text-emerald-300">{fmtMoney(calc.totalLandedCost, calc.currency)}</p>
           </div>
           <div className="text-right">
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Effective rate</p>
@@ -876,10 +884,10 @@ function RegionCard({
           </div>
         </div>
         <div className="mt-3 flex items-center justify-between text-xs">
-          <span className="text-muted-foreground flex items-center gap-1"><ShieldCheck className="h-3 w-3 text-cyan-600" /> avg agent confidence</span>
+          <span className="text-muted-foreground flex items-center gap-1"><ShieldCheck className="h-3 w-3 text-emerald-600" /> avg agent confidence</span>
           <span className="font-mono">{Math.round(avgConfidence * 100)}%</span>
         </div>
-        <Progress value={avgConfidence * 100} className="mt-1 h-1 [&>div]:bg-cyan-500" />
+        <Progress value={avgConfidence * 100} className="mt-1 h-1 [&>div]:bg-emerald-500" />
       </CardContent>
     </Card>
   );

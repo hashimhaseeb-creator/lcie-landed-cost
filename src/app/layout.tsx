@@ -45,7 +45,7 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "Green G(P)\u2074\u2122 Global Operations" }],
   icons: {
-    icon: "/logo.svg",
+    icon: "/gp4-logo.png",
   },
   openGraph: {
     title: "Green G(P)\u2074\u2122 Global Operations \u2014 LCIE Landed Cost Engine",

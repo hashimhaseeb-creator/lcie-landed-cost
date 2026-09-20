@@ -51,24 +51,24 @@
    Cream bg #F6F8F5, warm tint #FFFBEB */
 :root {
   --radius: 0.625rem;
-  --background: #F6F8F5;          /* warm cream */
+  --background: #E7EEDC;          /* green (per brand) */
   --foreground: #1A2420;          /* near-black green-tinted */
   --card: #FFFFFF;
   --card-foreground: #1A2420;
   --popover: #FFFFFF;
   --popover-foreground: #1A2420;
-  --primary: #0891B2;             /* cyan-600 — brand primary */
-  --primary-foreground: #F0FDFF;
-  --secondary: #ECFEFF;           /* cyan-50 */
-  --secondary-foreground: #0E7490;
-  --muted: #F0F9FF;               /* sky-50 */
+  --primary: #2E6A45;             /* forest green */
+  --primary-foreground: #F4F9EC;
+  --secondary: #DDE7CC;
+  --secondary-foreground: #2E6A45;
+  --muted: #D6E1C2;
   --muted-foreground: #4A5750;
-  --accent: #D1FAE5;             /* emerald-200 — green lens accent */
-  --accent-foreground: #065F46;
+  --accent: #C9DDB0;
+  --accent-foreground: #2E6A45;
   --destructive: #E11D48;
-  --border: #D6E4DE;
-  --input: #D6E4DE;
-  --ring: #22D3EE;                /* brand theme-color */
+  --border: #C3D4AC;
+  --input: #C3D4AC;
+  --ring: #2E6A45;
   --chart-1: #0891B2;            /* cyan — duty */
   --chart-2: #0D9488;            /* teal — VAT */
   --chart-3: #10B981;            /* emerald — subtotal */
@@ -108,7 +108,7 @@
   --destructive: #F43F5E;
   --border: rgba(255,255,255,0.08);
   --input: rgba(255,255,255,0.12);
-  --ring: #22D3EE;
+  --ring: #2E6A45;
   --chart-1: #22D3EE;
   --chart-2: #2DD4BF;
   --chart-3: #34D399;
