@@ -19,6 +19,7 @@ import { DUTY_RULES } from '@/lib/hs-knowledge-base';
 import { resolveDestination } from './destination';
 import { getFxRate } from './fx';
 import { resolveFta } from './fta';
+import { getRateSnapshot } from './regulatory-intelligence';
 import type { Region, RegionCalculation, LineBreakdown, CalculateResponse, LandedCostInputs, WaterfallStep, FtaAdvisory } from './types';
 
 export async function calculateLandedCost(
@@ -296,9 +297,26 @@ export async function calculateLandedCost(
       note: `${ftaAdvisory.agreementName} · preferential ${(ftaAdvisory.preferentialRate * 100).toFixed(1)}% vs MFN ${(weightedMfn * 100).toFixed(1)}% · saves ${sym(dest.currency)}${saving.toLocaleString()} (claim requires proof of origin)`,
     });
   }
-  if (chinaReciprocalTotal > 0) push('+ 9903.88.x China 10% reciprocal (held per Nov 10 2025 deal)', chinaReciprocalTotal, avgRate(lineBreakdown, 'chinaReciprocalRate'), 'EO 14358 Nov 4 2025 + Nov 10 2025 US-China agreement held China reciprocal at 10% through Nov 10 2026 (was briefly 34% Apr-Nov 2025; supersedes legacy Section 301 25%)');
-  if (cnhkEoTotal > 0) push('+ 9903.01.24 Fentanyl IEEPA 10% (reduced Nov 10 2025)', cnhkEoTotal, avgRate(lineBreakdown, 'cnhkEoRate'), 'CSMS 66749380 Nov 7 2025 + EO 14358 Nov 4 2025 — fentanyl IEEPA reduced 20% → 10% effective Nov 10 2025');
-  if (anyCountryTotal > 0) push('+ 9903.01.25 any-country reciprocal 10% baseline', anyCountryTotal, avgRate(lineBreakdown, 'anyCountryRate'), 'EO 14257 Apr 2 2025 baseline reciprocal — 24% additional portion SUSPENDED through Nov 10 2026; only the 10% baseline remains in effect');
+  // Snapshot-driven waterfall labels — the rate + effectiveDate + citation come from
+  // the regulatory-intelligence module so they auto-update when the user clicks
+  // "Verify current rates" on the UI (or after the 24-hour TTL cache expires).
+  const snap = getRateSnapshot();
+  const snapRec = (k: string) => snap.rates.find((r) => r.key === k);
+  if (chinaReciprocalTotal > 0) {
+    const e = snapRec('us-9903.88.x');
+    push('+ 9903.88.x China reciprocal', chinaReciprocalTotal, avgRate(lineBreakdown, 'chinaReciprocalRate'),
+      `${e?.citation ?? 'EO 14257 Chapter-99'} — effective ${e?.effectiveDate ?? 'N/A'} · rate-snapshot verified ${e?.lastVerifiedAt?.slice(0, 10) ?? 'N/A'}`);
+  }
+  if (cnhkEoTotal > 0) {
+    const e = snapRec('us-9903.01.24');
+    push('+ 9903.01.24 Fentanyl IEEPA', cnhkEoTotal, avgRate(lineBreakdown, 'cnhkEoRate'),
+      `${e?.citation ?? 'IEEPA fentanyl tariff'} — effective ${e?.effectiveDate ?? 'N/A'} · rate-snapshot verified ${e?.lastVerifiedAt?.slice(0, 10) ?? 'N/A'}`);
+  }
+  if (anyCountryTotal > 0) {
+    const e = snapRec('us-9903.01.25');
+    push('+ 9903.01.25 any-country baseline reciprocal', anyCountryTotal, avgRate(lineBreakdown, 'anyCountryRate'),
+      `${e?.citation ?? 'EO 14257 baseline reciprocal'} — effective ${e?.effectiveDate ?? 'N/A'} · rate-snapshot verified ${e?.lastVerifiedAt?.slice(0, 10) ?? 'N/A'}`);
+  }
   if (vatTotal > 0) push(region === 'AU' ? '+ GST (Goods & Services Tax)' : '+ VAT', vatTotal, dest.vatRate, region !== 'US' ? `On (CIF + duty) — ${dest.countryName} ${region === 'AU' ? 'GST' : 'standard rate'}` : undefined);
   if (mpfTotal > 0) push('+ MPF (Merchandise Processing Fee)', mpfTotal, rule.mpfRate, 'US 0.3464%, floored/capped');
   if (hmfTotal > 0) push('+ HMF (Harbor Maintenance Fee)', hmfTotal, rule.hmfRate, 'US ocean 0.125% (not assessed for rail/air)');

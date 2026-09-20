@@ -19,6 +19,7 @@ import ZAI from 'z-ai-web-dev-sdk';
 import { db } from '@/lib/db';
 import { findHsEntries, HS_KNOWLEDGE_BASE, DUTY_RULES } from '@/lib/hs-knowledge-base';
 import { resolveDestination } from './destination';
+import { getRateSnapshot } from './regulatory-intelligence';
 import type { Region, AgentStep, DeterminationResult, DetermineResponse } from './types';
 
 const MODEL_TAG = 'glm-5.2 (z-ai-web-dev-sdk)';
@@ -66,12 +67,13 @@ Rules:
 - dutyRate is a DECIMAL ad valorem fraction (0.165 = 16.5%, 0 = free). dutyType ∈ {"ad valorem","specific","free"}.
 - vatRate is a DECIMAL (0.20 = 20%). For US, vatRate MUST be 0 (no federal VAT). For AU, vatRate is the GST rate (0.10 = 10%) on (customs value + duty). For UK/EU it is the member-state VAT.
 - additionalLevies: object mapping levy name → decimal rate. For US always include {"MPF":0.003464,"ChinaReciprocal":<rate>,"CNHKEO":<rate>,"AnyCountry":<rate>}. For UK/EU use null or {}.
-- 9903.88.x China 10% reciprocal (US, ChinaReciprocal): the 2025 EO 14257 China-specific reciprocal tariff, HELD AT 10% under the Nov 10 2025 US-China trade deal (Trump-Xi Oct 30 2025 meeting) — in effect through Nov 10 2026 (per EO 14358 Nov 4 2025 + Federal Register Nov 7 2025). If originCountry is CN set "ChinaReciprocal":0.10; 0 otherwise. (This is the modern Chapter-99 successor to the legacy Section 301 List 3 rate — DO NOT use the old 25% rate, that was superseded Nov 2025.)
-- 9903.01.24 Fentanyl IEEPA 10% (US, CNHKEO): the fentanyl-related IEEPA tariff on China-origin goods, REDUCED FROM 20% TO 10% effective Nov 10 2025 (per CSMS # 66749380, Nov 7 2025 + EO 14358 Nov 4 2025). If origin is CN set "CNHKEO":0.10; 0 otherwise.
-- 9903.01.25 any-country reciprocal 10% (US, AnyCountry): the 10% baseline reciprocal duty applying to ANY country of origin (EO 14257 Apr 2 2025). Always set "AnyCountry":0.10. (The 24% ADDITIONAL portion for non-agreement countries is SUSPENDED through Nov 10 2026 — only the 10% baseline remains in effect.)
+- 9903.88.x China reciprocal (US, ChinaReciprocal): the EO 14257 China-specific reciprocal tariff. CURRENT RATE is fetched from the regulatory-intelligence snapshot at runtime — verified via web_search against CBP / Federal Register / USTR. As of the last refresh, the rate is held at 10% per the Nov 10 2025 US-China deal (EO 14358 Nov 4 2025 + CSMS # 66749380 Nov 7 2025), in effect through Nov 10 2026. Use the rate provided in the grounding JSON's "_rateSnapshot" block — DO NOT hardcode. If originCountry is CN set "ChinaReciprocal":<snapshot rate>; 0 otherwise. (Supersedes the legacy Section 301 List 3 rate.)
+- 9903.01.24 Fentanyl IEEPA (US, CNHKEO): the fentanyl-related IEEPA tariff on China-origin goods. CURRENT RATE is fetched from the regulatory-intelligence snapshot at runtime. As of the last refresh, the rate is 10% (REDUCED FROM 20% effective Nov 10 2025 per CSMS # 66749380 + EO 14358). Use the rate provided in the grounding JSON's "_rateSnapshot" block. If origin is CN set "CNHKEO":<snapshot rate>; 0 otherwise.
+- 9903.01.25 any-country reciprocal 10% baseline (US, AnyCountry): the EO 14257 baseline reciprocal duty applying to ANY country of origin. Use the snapshot rate. (The 24% ADDITIONAL portion for non-agreement countries is SUSPENDED through Nov 10 2026 — only the 10% baseline remains in effect.)
 - HMF (US, Harbor Maintenance Fee, 0.125%): ocean-mode only. Include "HMF":0.00125 if the shipment is ocean-borne; omit/0 for rail/air/truck. The calc engine decides based on modeOfTransport.
-- The three Chapter-99 provisions are applied ADDITIVELY to the entered value (FOB) — they stack, not offset. China origin → 10%+10%+10% = 30% (as of Sep 2026, post-Nov 10 2025 deal); non-China → 10%.
-- NOTE: legacy Section 301 List 3/4A duties (25% on many China-origin goods from the first Trump term) remain in effect for SPECIFIC HTS subheadings — these are item-specific surcharges not modelled here. The Wharton Sep 9 2026 update reports China's effective tariff rate at 22.8% (average across all goods including residual Section 301).
+- The three Chapter-99 provisions are applied ADDITIVELY to the entered value (FOB) — they stack, not offset. As of the last rate-snapshot refresh, China origin → 10%+10%+10% = 30%; non-China → 10%.
+- NOTE: legacy Section 301 List 3/4A duties (25% on many China-origin goods from the first Trump term) remain in effect for SPECIFIC HTS subheadings — these are item-specific surcharges not modelled here.
+- The grounding JSON now includes a "_rateSnapshot" block with the current rates + effectiveDate + citation for each provision. ALWAYS use these snapshot values, never hardcode.
 - confidence: 0..1 self-reported certainty (use ≥0.85 when grounded by KB, 0.6-0.84 for LLM-only inference).
 - reasoning: ONE concise sentence explaining the classification rationale (material + chapter + duty treatment + the Chapter-99 stack).
 - If a product is genuinely duty-free under the WTO Information Technology Agreement (smartphones, laptops, semiconductors), set dutyRate 0 and dutyType "free" with a note in reasoning.
@@ -127,18 +129,31 @@ function buildUserPrompt(
     })
     .join('\n\n');
 
-  return `Duty/VAT calculus rules (for your context only — DO NOT recalc landed cost, just classify):
+  return `Duty/VAT calculus rules + current rate snapshot (for your context only — DO NOT recalc landed cost, just classify using the snapshot rates):
 ${JSON.stringify(
   {
     US: { dutyCalcBase: DUTY_RULES.US.dutyCalcBase, mpfRate: DUTY_RULES.US.mpfRate, hmfRate: DUTY_RULES.US.hmfRate, vat: 0 },
     UK: { dutyCalcBase: DUTY_RULES.UK.dutyCalcBase, vatRate: DUTY_RULES.UK.vatRate },
     EU: { dutyCalcBase: DUTY_RULES.EU.dutyCalcBase, vatRate: DUTY_RULES.EU.vatRate },
+    _rateSnapshot: {
+      refreshedAt: getRateSnapshot().refreshedAt,
+      source: getRateSnapshot().source,
+      rates: getRateSnapshot().rates.map((r) => ({
+        key: r.key,
+        label: r.label,
+        rate: r.rate,
+        effectiveDate: r.effectiveDate,
+        citation: r.citation,
+        source: r.url,
+        lastVerifiedAt: r.lastVerifiedAt,
+      })),
+    },
   },
   null,
   2,
 )}
 
-Classify each line item below for US, UK and EU. Return the JSON object per the system contract.
+Classify each line item below for US, UK and EU. ALWAYS use the snapshot rates above (do not hardcode). Return the JSON object per the system contract.
 
 ${groundingBlock}`;
 }
@@ -460,9 +475,14 @@ async function storeItemDeterminations(
           additionalLevies: region === 'US'
             ? (() => {
                 const cn = ((li.originCountry ?? po.originCountry ?? 'CN') + '').toUpperCase() === 'CN';
-                const chinaReciprocal = cn ? 0.10 : 0;   // 9903.88.x — held at 10% per Nov 10 2025 US-China deal (EO 14358 Nov 4 2025 + CSMS 66749380 Nov 7 2025)
-                const cnhkEo = cn ? 0.10 : 0;            // 9903.01.24 Fentanyl IEEPA — reduced 20% → 10% effective Nov 10 2025
-                const anyCountry = 0.10;                  // 9903.01.25 baseline reciprocal 10% (any country)
+                const snap = getRateSnapshot();
+                const byKey = (k: string) => snap.rates.find((r) => r.key === k);
+                const rec = byKey('us-9903.88.x');
+                const fent = byKey('us-9903.01.24');
+                const anyC = byKey('us-9903.01.25');
+                const chinaReciprocal = cn ? (rec?.rate ?? 0.10) : 0;   // 9903.88.x — from regulatory-intelligence snapshot
+                const cnhkEo = cn ? (fent?.rate ?? 0.10) : 0;          // 9903.01.24 Fentanyl IEEPA — from snapshot
+                const anyCountry = anyC?.rate ?? 0.10;                   // 9903.01.25 baseline reciprocal — from snapshot
                 return JSON.stringify({
                   MPF: DUTY_RULES.US.mpfRate,
                   HMF: DUTY_RULES.US.hmfRate, // calc engine applies only for ocean mode
@@ -471,6 +491,11 @@ async function storeItemDeterminations(
                   AnyCountry: anyCountry,
                   Section301: chinaReciprocal,           // legacy alias
                   IEEPA: cnhkEo + anyCountry,             // legacy alias
+                  _rateSnapshot: {
+                    '9903.88.x': { rate: rec?.rate, effectiveDate: rec?.effectiveDate, citation: rec?.citation },
+                    '9903.01.24': { rate: fent?.rate, effectiveDate: fent?.effectiveDate, citation: fent?.citation },
+                    '9903.01.25': { rate: anyC?.rate, effectiveDate: anyC?.effectiveDate, citation: anyC?.citation },
+                  },
                 });
               })()
             : region === 'AU'

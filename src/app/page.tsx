@@ -65,6 +65,13 @@ export default function Home() {
   const [cbpLoading, setCbpLoading] = useState(false);
   const [savedCalcs, setSavedCalcs] = useState<SavedCalculationItem[]>([]);
   const [savedCalcsLoading, setSavedCalcsLoading] = useState(false);
+  const [rateSnapshot, setRateSnapshot] = useState<{
+    refreshedAt: string;
+    nextRefreshDueAt: string;
+    source: string;
+    rates: { key: string; label: string; rate: number; effectiveDate: string; citation: string; url: string }[];
+  } | null>(null);
+  const [rateRefreshLoading, setRateRefreshLoading] = useState(false);
   const cbpInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -74,6 +81,37 @@ export default function Home() {
   useEffect(() => setMounted(true), []);
   useEffect(() => {
     fetch('/api/lcie/sample-po').then((r) => r.json()).then((d) => setSamples(d.samples ?? [])).catch(() => void 0);
+  }, []);
+
+  // Fetch the current rate snapshot on mount so the hero can show "Rates last verified" badge.
+  useEffect(() => {
+    fetch('/api/lcie/current-rates', { cache: 'no-store' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d) setRateSnapshot(d); })
+      .catch(() => void 0);
+  }, []);
+
+  // "Verify current rates" — calls the POST /api/lcie/refresh-rates endpoint which
+  // re-fetches every provision's current rate via z-ai-web-dev-sdk web_search and
+  // returns a structured diff vs. the previously cached snapshot.
+  const handleRefreshRates = useCallback(async () => {
+    setRateRefreshLoading(true);
+    try {
+      const r = await fetch('/api/lcie/refresh-rates', { method: 'POST' });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail ?? e.error ?? 'Refresh failed'); }
+      const d = await r.json();
+      setRateSnapshot(d);
+      const changeCount = d.changeCount ?? 0;
+      if (changeCount > 0) {
+        toast.success(`Rates re-verified — ${changeCount} change(s) detected vs. previous snapshot`);
+      } else {
+        toast.success('Rates re-verified — all provisions match the current snapshot');
+      }
+    } catch (e) {
+      toast.error('Rate refresh failed — check your ZAI_API_KEY env var');
+      setError(e instanceof Error ? e.message : 'Rate refresh failed');
+    }
+    finally { setRateRefreshLoading(false); }
   }, []);
 
   // Saved calculations audit trail — fetches on mount and after each calc run
@@ -292,6 +330,41 @@ export default function Home() {
               ].map((f) => (
                 <Badge key={f.label} variant="outline" className="gap-1.5 py-1.5 px-3 rounded-full border-emerald-200/60 dark:border-emerald-900/40"><f.icon className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> {f.label}</Badge>
               ))}
+            </div>
+            {/* Rate-snapshot verification badge + manual refresh button */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-950/15 p-2.5">
+              <Badge variant="outline" className="gap-1.5 border-emerald-300/60 text-emerald-700 dark:text-emerald-300 dark:border-emerald-800/60">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Rates {rateSnapshot?.source === 'web-search-verified' ? 'web-verified' : 'baseline'}:
+                {' '}last verified {rateSnapshot?.refreshedAt ? new Date(rateSnapshot.refreshedAt).toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' }) : '—'}
+                {' '}· next auto-refresh due {rateSnapshot?.nextRefreshDueAt ? new Date(rateSnapshot.nextRefreshDueAt).toLocaleDateString(undefined, { month: 'short', day: '2-digit' }) : '—'}
+              </Badge>
+              <Button variant="outline" size="sm" onClick={handleRefreshRates} disabled={rateRefreshLoading} className="gap-1.5 border-emerald-300/60 text-emerald-700 dark:text-emerald-300 dark:border-emerald-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40">
+                {rateRefreshLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Verify current rates
+              </Button>
+              {rateSnapshot && rateSnapshot.rates.length > 0 && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge variant="secondary" className="gap-1 cursor-help">
+                        <Percent className="h-3 w-3" /> {rateSnapshot.rates.length} provisions tracked
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-[380px]">
+                      <div className="text-xs space-y-1">
+                        {rateSnapshot.rates.map((r) => (
+                          <div key={r.key} className="flex justify-between gap-3">
+                            <span className="font-medium">{r.label}</span>
+                            <span className="font-mono text-emerald-700 dark:text-emerald-300">
+                              {(r.rate * 100).toFixed(r.rate < 0.05 && r.rate > 0 ? 4 : 2)}% · eff {r.effectiveDate}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
             </div>
           </motion.div>
         </section>
