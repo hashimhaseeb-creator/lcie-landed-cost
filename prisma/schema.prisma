@@ -81,5 +81,16 @@ model LandedCostCalculation {
   insurance     Float
   totalLandedCost Float
   breakdownJson String?  // JSON string of per-line breakdown for audit
+  destinationCountry    String?   // ISO-2 (e.g. US, GB, DE, AU)
+  destinationCurrency   String?   // ISO-3 (USD, GBP, EUR, AUD)
+  originCurrency        String?   // ISO-3 of PO/supplier currency
+  effectiveRate         Float?    // decimal (e.g. 0.5535 = 55.35%)
+  fxSnapshotJson        String?   // JSON: {from,to,rate,source,date,fetchedAt}
+  ftaName               String?   // e.g. "AUSFTA" if a preferential FTA applied
+  ftaPreferentialRate   Float?    // decimal — the FTA preferential rate
+  mfnRate               Float?    // decimal — the MFN/General rate for the line set
+  poNumber              String?   // denormalised for fast display in history list
+  destinationLabel      String?   // e.g. "United States" / "Australia"
+  originCountry         String?   // ISO-2 origin (denormalised from PO)
   createdAt     DateTime @default(now())
 }

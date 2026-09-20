@@ -126,6 +126,26 @@ export interface WaterfallStep {
   note?: string;
 }
 
+/**
+ * FTA (Free Trade Agreement) preferential tariff advisory.
+ * Resolved by the calculator per line item — shows the MFN rate vs the
+ * preferential FTA rate so the importer can compare and claim.
+ */
+export interface FtaAdvisory {
+  originISO2: string;
+  destinationISO2: string;
+  applies: boolean;                 // does any in-force FTA cover this origin→dest route?
+  agreementName: string;            // long-form agreement name (e.g. "United States–Australia FTA")
+  agreementShortName: string;       // "AUSFTA" | "USMCA" | "UK-EU TCA" | ...
+  preferentialRate: number;         // decimal (0 = duty-free)
+  preferentialType: 'free' | 'ad_valorem' | 'reduced';
+  mfnRate: number;                  // MFN/General rate for this HS line (decimal)
+  savingVsMfn: number;              // absolute decimal delta (mfnRate − preferentialRate)
+  ruleOfOriginSummary: string;      // concise rule of origin text
+  notes: string;                     // citation + entry-into-force status
+  alternatives: { agreementShortName: string; preferentialRate: number; preferentialType: string }[];
+}
+
 export interface RegionCalculation {
   region: Region;
   label: string;
@@ -149,9 +169,45 @@ export interface RegionCalculation {
   otherImportCharges: number; // customs broker, documentation, duty advance, etc.
   totalLandedCost: number;
   effectiveRate: number;
+  // FTA preferential advisory — populated when an FTA covers origin→destination for the line set.
+  fta?: FtaAdvisory;
   lineBreakdown: LineBreakdown[];
   waterfall: WaterfallStep[]; // step-by-step duty stack for the detailed view
   notes: string;
+}
+
+/**
+ * A single row in the Saved Calculations history list (one per PO run).
+ * Persisted automatically each time the calculator runs — i.e., it updates
+ * every time a customer "buys" a calculation.
+ */
+export interface SavedCalculationItem {
+  id: string;
+  poId: string;
+  poNumber: string;
+  supplier?: string | null;
+  region: Region;
+  destinationCountry?: string | null;
+  destinationCurrency?: string | null;
+  destinationLabel?: string | null;
+  originCountry?: string | null;
+  originCurrency?: string | null;
+  subtotal: number;
+  dutyTotal: number;
+  vatTotal: number;
+  mpfTotal: number;
+  hmfTotal: number;
+  otherLevies: number;
+  freight: number;
+  insurance: number;
+  totalLandedCost: number;
+  effectiveRate: number;
+  ftaName?: string | null;
+  ftaPreferentialRate?: number | null;
+  mfnRate?: number | null;
+  fx?: { from?: string; to?: string; rate?: number; source?: string; date?: string; fetchedAt?: string } | null;
+  lineItemCount: number;
+  createdAt: string;        // ISO
 }
 
 /** Editable landed-cost inputs the customer enters before/after the agent run. */

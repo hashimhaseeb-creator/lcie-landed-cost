@@ -7,7 +7,8 @@
  * Green G(P)⁴™ Global Operations — LCIE Landed Cost Engine
  */
 
-import { DUTY_RULES, type Region } from '@/lib/hs-knowledge-base';
+import { DUTY_RULES } from '@/lib/hs-knowledge-base';
+import type { Region } from './types';
 
 export interface DestinationInfo {
   countryCode: string;

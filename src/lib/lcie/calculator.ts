@@ -18,7 +18,8 @@ import { db } from '@/lib/db';
 import { DUTY_RULES } from '@/lib/hs-knowledge-base';
 import { resolveDestination } from './destination';
 import { getFxRate } from './fx';
-import type { Region, RegionCalculation, LineBreakdown, CalculateResponse, LandedCostInputs, WaterfallStep } from './types';
+import { resolveFta } from './fta';
+import type { Region, RegionCalculation, LineBreakdown, CalculateResponse, LandedCostInputs, WaterfallStep, FtaAdvisory } from './types';
 
 export async function calculateLandedCost(
   poId: string,
@@ -221,6 +222,34 @@ export async function calculateLandedCost(
   );
   const effectiveRate = subtotal > 0 ? totalLandedCost / subtotal - 1 : 0;
 
+  // ---- FTA (Free Trade Agreement) preferential-tariff advisory ----
+  // Resolves the in-force FTA covering origin→destination (USMCA, AUSFTA,
+  // UK-EU TCA, EU FTA network, RCEP, CPTPP, etc.) and surfaces the preferential
+  // rate vs the MFN rate so the importer can decide whether to claim it.
+  // Eligibility still requires a valid proof of origin + meeting the rule.
+  const originISO2 = (po.originCountry ?? '').toUpperCase();
+  const destISO2 = dest.countryCode;
+  const weightedMfn = avgDutyRate(lineBreakdown) ?? 0;
+  const ftaResolution = resolveFta(originISO2, destISO2, weightedMfn);
+  const ftaAdvisory: FtaAdvisory = {
+    originISO2,
+    destinationISO2: destISO2,
+    applies: ftaResolution.preferential.applies,
+    agreementName: ftaResolution.preferential.agreementName,
+    agreementShortName: ftaResolution.preferential.agreementShortName,
+    preferentialRate: ftaResolution.preferential.preferentialRate,
+    preferentialType: ftaResolution.preferential.preferentialType,
+    mfnRate: weightedMfn,
+    savingVsMfn: Math.max(0, weightedMfn - ftaResolution.preferential.preferentialRate),
+    ruleOfOriginSummary: ftaResolution.preferential.ruleOfOriginSummary,
+    notes: ftaResolution.preferential.notes,
+    alternatives: ftaResolution.alternatives.map((a) => ({
+      agreementShortName: a.agreementShortName,
+      preferentialRate: a.preferentialRate,
+      preferentialType: a.preferentialType,
+    })),
+  };
+
   // ---- waterfall: the detailed step-by-step duty stack ----
   const waterfall: WaterfallStep[] = [];
   let cum = 0;
@@ -237,6 +266,20 @@ export async function calculateLandedCost(
     cum = cifTotal;
   }
   if (dutyTotal > 0) push(`+ Import duty (MFN)`, dutyTotal, avgDutyRate(lineBreakdown), 'AI-determined HS rate × calc base');
+  // FTA advisory step — shows the preferential rate available under the in-force
+  // FTA between this origin and destination, with the duty saving vs MFN.
+  // Not added to the running total (claim requires proof of origin); surfaced for transparency.
+  if (ftaAdvisory.applies) {
+    const prefDuty = round(dutyTotal * ftaAdvisory.preferentialRate / Math.max(0.0001, weightedMfn || 1));
+    const saving = round(dutyTotal - prefDuty);
+    waterfall.push({
+      label: `FTA ${ftaAdvisory.agreementShortName} preferential`,
+      amount: prefDuty,
+      rate: ftaAdvisory.preferentialRate,
+      cumulative: cum,
+      note: `${ftaAdvisory.agreementName} · preferential ${(ftaAdvisory.preferentialRate * 100).toFixed(1)}% vs MFN ${(weightedMfn * 100).toFixed(1)}% · saves ${sym(dest.currency)}${saving.toLocaleString()} (claim requires proof of origin)`,
+    });
+  }
   if (chinaReciprocalTotal > 0) push('+ 9903.88.01 China 25% reciprocal', chinaReciprocalTotal, avgRate(lineBreakdown, 'chinaReciprocalRate'), '2025 EO China reciprocal (replaces legacy Section 301)');
   if (cnhkEoTotal > 0) push('+ 9903.01.24 CN/HK EO additional 20%', cnhkEoTotal, avgRate(lineBreakdown, 'cnhkEoRate'), 'China/Hong Kong additional duty');
   if (anyCountryTotal > 0) push('+ 9903.01.25 any-country reciprocal 10%', anyCountryTotal, avgRate(lineBreakdown, 'anyCountryRate'), 'Applies to any country of origin');
@@ -260,7 +303,8 @@ export async function calculateLandedCost(
     vatTotal, mpfTotal, hmfTotal, hmfApplies, modeOfTransport: inputs.modeOfTransport ?? 'Ocean',
     otherLevies: otherLeviesTotal, freight: freightDest, insurance: insuranceDest,
     otherImportCharges: otherImportChargesDest,
-    totalLandedCost, effectiveRate, lineBreakdown, waterfall, notes: rule.notes,
+    totalLandedCost, effectiveRate, fta: ftaAdvisory,
+    lineBreakdown, waterfall, notes: rule.notes,
   };
 
   // persist (single region; the 2025 Chapter-99 provisions folded into otherLevies for the DB row)
@@ -271,6 +315,26 @@ export async function calculateLandedCost(
       otherLevies: otherLeviesTotal + chinaReciprocalTotal + cnhkEoTotal + anyCountryTotal,
       freight: freightDest, insurance: insuranceDest,
       totalLandedCost, breakdownJson: JSON.stringify(lineBreakdown),
+      // destination / FX / effective-rate snapshot fields (Task 16-b)
+      destinationCountry: dest.countryCode,
+      destinationCurrency: dest.currency,
+      originCurrency: poCurrency,
+      effectiveRate,
+      fxSnapshotJson: fx ? JSON.stringify({
+        from: poCurrency,
+        to: dest.currency,
+        rate: fx.rate,
+        source: fx.source,
+        date: fx.date,
+        fetchedAt: fx.fetchedAt,
+      }) : null,
+      // FTA snapshot — populated by Task 18 wiring
+      ftaName: ftaAdvisory.applies ? ftaAdvisory.agreementShortName : null,
+      ftaPreferentialRate: ftaAdvisory.applies ? ftaAdvisory.preferentialRate : null,
+      mfnRate: weightedMfn,
+      poNumber: po.poNumber,
+      destinationLabel: dest.label,
+      originCountry: po.originCountry ?? null,
     },
   });
 
@@ -284,8 +348,8 @@ export async function calculateLandedCost(
       flag: dest.flag, label: dest.label,
     },
     fx: fx.source === 'identity' && poCurrency === dest.currency ? null : {
-      fromCurrency: fx.fromCurrency ?? poCurrency,
-      toCurrency: fx.toCurrency ?? dest.currency,
+      fromCurrency: poCurrency,
+      toCurrency: dest.currency,
       rate: fx.rate, source: fx.source, date: fx.date, fetchedAt: fx.fetchedAt,
     },
     calculation,
@@ -299,6 +363,16 @@ function num(v: unknown): number {
 }
 function round(n: number): number {
   return Math.round(n * 100) / 100;
+}
+/** Currency symbol for the destination currency (used in waterfall notes). */
+function sym(currency: string): string {
+  const map: Record<string, string> = {
+    USD: '$', GBP: '£', EUR: '€', AUD: 'A$', CAD: 'C$', JPY: '¥', CNY: '¥',
+    INR: '₹', PKR: '₨', BRL: 'R$', MXN: 'MX$', NZD: 'NZ$', SEK: 'kr',
+    PLN: 'zł', DKK: 'kr', NOK: 'kr', CZK: 'Kč', HUF: 'Ft', RON: 'lei',
+    BGN: 'лв', HRK: 'kn', TRY: '₺', AED: 'AED', SAR: 'SAR',
+  };
+  return map[currency.toUpperCase()] ?? currency + ' ';
 }
 function avgDutyRate(lines: LineBreakdown[]): number | undefined {
   const fob = lines.reduce((s, l) => s + l.fobValue, 0);

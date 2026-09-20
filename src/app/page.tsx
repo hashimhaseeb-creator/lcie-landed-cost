@@ -7,6 +7,7 @@ import {
   CheckCircle2, AlertTriangle, Cpu, Database, ScanLine, Brain, ChevronRight,
   Sun, Moon, Download, RefreshCw, Boxes, Search, Layers, Leaf, ArrowRight,
   TrendingUp, Wallet, Ship, FileCheck, Anchor, MapPin, Percent,
+  History, Scale, Gavel, Library, BookOpen, Handshake, Landmark, Clock, ExternalLink,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
@@ -20,9 +21,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Accordion, AccordionContent, AccordionItem, AccordionTrigger,
+} from '@/components/ui/accordion';
 import { Gp4Logo } from '@/components/gp4-logo';
 import { DutyCharts } from '@/components/lcie/duty-charts';
-import type { PoDto, DetermineResponse, CalculateResponse, DeterminationResult, AgentStep, LandedCostInputs, CbpEntry } from '@/lib/lcie/types';
+import type { PoDto, DetermineResponse, CalculateResponse, DeterminationResult, AgentStep, LandedCostInputs, CbpEntry, SavedCalculationItem, FtaAdvisory } from '@/lib/lcie/types';
+import { REGULATIONS_BY_REGION } from '@/lib/lcie/regulations';
 import { toast } from 'sonner';
 
 const BRAND = 'Green G(P)\u2074\u2122';
@@ -58,6 +63,8 @@ export default function Home() {
   const [inputs, setInputs] = useState<LandedCostInputs>({});
   const [cbpEntry, setCbpEntry] = useState<CbpEntry | null>(null);
   const [cbpLoading, setCbpLoading] = useState(false);
+  const [savedCalcs, setSavedCalcs] = useState<SavedCalculationItem[]>([]);
+  const [savedCalcsLoading, setSavedCalcsLoading] = useState(false);
   const cbpInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -68,6 +75,20 @@ export default function Home() {
   useEffect(() => {
     fetch('/api/lcie/sample-po').then((r) => r.json()).then((d) => setSamples(d.samples ?? [])).catch(() => void 0);
   }, []);
+
+  // Saved calculations audit trail — fetches on mount and after each calc run
+  // ("updates every time a customer buys it" — every calc run is persisted).
+  const refreshSavedCalcs = useCallback(async () => {
+    setSavedCalcsLoading(true);
+    try {
+      const r = await fetch('/api/lcie/saved-calculations', { cache: 'no-store' });
+      if (!r.ok) return;
+      const d = await r.json();
+      setSavedCalcs(d.items ?? []);
+    } catch { /* swallow */ }
+    finally { setSavedCalcsLoading(false); }
+  }, []);
+  useEffect(() => { refreshSavedCalcs(); }, [refreshSavedCalcs]);
 
   useEffect(() => {
     if (!agentResult) return;
@@ -175,10 +196,11 @@ export default function Home() {
       const calc: CalculateResponse = await r2.json();
       setCalcResult(calc);
       toast.success(`Landed cost calculated for ${calc.destination.flag} ${calc.destination.countryName} in ${calc.destination.currency}`);
+      refreshSavedCalcs(); // audit trail updates every time a customer "buys" a calc
       setTimeout(() => workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 120);
     } catch (e) { setError(e instanceof Error ? e.message : 'Agent run failed'); toast.error('LCIE agent failed'); }
     finally { setAgentLoading(false); setCalcLoading(false); }
-  }, [po, inputs]);
+  }, [po, inputs, refreshSavedCalcs]);
 
   const handleRecalculate = useCallback(async () => {
     if (!po) return;
@@ -192,9 +214,10 @@ export default function Home() {
       const calc: CalculateResponse = await r.json();
       setCalcResult(calc);
       toast.success('Landed cost re-calculated with your inputs');
+      refreshSavedCalcs();
     } catch (e) { setError(e instanceof Error ? e.message : 'Re-calculate failed'); toast.error('Re-calculate failed'); }
     finally { setCalcLoading(false); }
-  }, [po, inputs]);
+  }, [po, inputs, refreshSavedCalcs]);
 
   const handleCompareEntry = useCallback(async (file: File) => {
     setCbpLoading(true);
@@ -254,15 +277,18 @@ export default function Home() {
               <span className="block text-emerald-600 dark:text-emerald-400">destination-aware duty stack with live FX</span>
             </h2>
             <p className="mt-3 text-muted-foreground text-base md:text-lg max-w-2xl">
-              Upload a PO and the agent determines the HS code &amp; full regulation stack — <strong className="text-foreground">Section 301, IEEPA, MPF, HMF, VAT</strong> — for <strong className="text-foreground">only the final destined country</strong>. US destinations settle in US$; UK in £, EU in € (or member currency) via <strong className="text-foreground">live ECB FX rates</strong>. You set freight, insurance &amp; every import charge.
+              Upload a PO and the LCIE agent determines the <strong className="text-foreground">HS tariff code</strong> &amp; full regulation stack for <strong className="text-foreground">only the final destined country</strong> — US (HTS · <strong className="text-foreground">9903.88.01 China 25%</strong> + <strong className="text-foreground">9903.01.24 CN/HK 20%</strong> + <strong className="text-foreground">9903.01.25 any-country 10%</strong> · <strong className="text-foreground">MPF</strong> + <strong className="text-foreground">HMF</strong> ocean-only), UK (Global Tariff + 20% VAT), EU (TARIC + member-state VAT), <strong className="text-foreground">Australia</strong> (ABF · GST 10% + flat IPC A$50). Live <strong className="text-foreground">FTA preferential</strong> rate surfaced against MFN (USMCA · AUSFTA · UK-EU TCA · EU-Korea · RCEP · CPTPP · ChAFTA · JAEPA · …). Detailed <strong className="text-foreground">rulings &amp; updated import laws</strong> per region. Live <strong className="text-foreground">ECB FX</strong> settles in destination currency. Every calc is <strong className="text-foreground">saved to your audit trail</strong> — the history below updates every time you run it.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               {[
-                { icon: Search, label: 'HS Classification Agent' },
+                { icon: Search, label: 'HS Tariff Classification' },
                 { icon: Layers, label: 'Destination-only stack' },
                 { icon: TrendingUp, label: 'Live FX conversion' },
                 { icon: Wallet, label: 'Editable import charges' },
+                { icon: Handshake, label: 'FTA preferential advisory' },
+                { icon: Gavel, label: 'Rulings & import laws' },
                 { icon: ShieldCheck, label: 'Auditable waterfall' },
+                { icon: History, label: 'Saved calc audit trail' },
               ].map((f) => (
                 <Badge key={f.label} variant="outline" className="gap-1.5 py-1.5 px-3 rounded-full border-emerald-200/60 dark:border-emerald-900/40"><f.icon className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> {f.label}</Badge>
               ))}
@@ -425,6 +451,16 @@ export default function Home() {
               cbpInputRef={cbpInputRef}
             />
           )}
+
+          {/* Detailed rulings & updated import laws for the destination region (shown when a calc exists; otherwise show all 4 regions as a reference) */}
+          {calcResult ? (
+            <RegulationsPanel region={calcResult.destination.region} />
+          ) : (
+            <RegulationsIndexOnboarding />
+          )}
+
+          {/* Saved calculations audit trail — always visible so the customer sees "it updates every time a customer buys it" */}
+          <SavedCalcsHistory items={savedCalcs} loading={savedCalcsLoading} onRefresh={refreshSavedCalcs} />
 
           {error && po && (<div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm"><AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" /><p className="text-destructive">{error}</p></div>)}
         </section>
@@ -872,6 +908,20 @@ function RegionCard({
         </div>
 
         <Separator className="my-3" />
+
+        {/* FTA preferential advisory banner */}
+        {calc.fta && calc.fta.applies && (
+          <FtaAdvisoryBanner fta={calc.fta} currency={calc.currency} dutyTotal={calc.dutyTotal} />
+        )}
+        {calc.fta && !calc.fta.applies && calc.fta.originISO2 && (
+          <div className="mb-3 rounded-lg border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/15 p-2.5 text-xs flex items-start gap-2">
+            <Handshake className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <p className="text-amber-800 dark:text-amber-300">
+              <strong>No in-force FTA</strong> between <span className="font-mono">{calc.fta.originISO2}</span> → <span className="font-mono">{calc.fta.destinationISO2}</span>. Goods will be assessed at the MFN / General rate. {calc.fta.ruleOfOriginSummary}
+            </p>
+          </div>
+        )}
+
         <div className="flex items-end justify-between">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Total landed cost</p>
@@ -888,6 +938,261 @@ function RegionCard({
           <span className="font-mono">{Math.round(avgConfidence * 100)}%</span>
         </div>
         <Progress value={avgConfidence * 100} className="mt-1 h-1 [&>div]:bg-emerald-500" />
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Regulations onboarding grid (shown when no calc result yet)         */
+/* ------------------------------------------------------------------ */
+
+function RegulationsIndexOnboarding() {
+  const regions: ('US' | 'UK' | 'EU' | 'AU')[] = ['US', 'UK', 'EU', 'AU'];
+  return (
+    <Card className="border-emerald-200/60 dark:border-emerald-900/40">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2"><Gavel className="h-5 w-5 text-emerald-600 dark:text-emerald-400" /> Detailed Rulings &amp; Updated Import Laws</CardTitle>
+        <CardDescription>Reference index of the customs authorities, current statutes, recent binding rulings and FTA networks for every supported destination region. Select a region in the destination dropdown to drill into its full reference, or run the LCIE agent to see the relevant region&apos;s panel above.</CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-emerald-100/40 dark:bg-emerald-900/30 border-t border-emerald-100 dark:border-emerald-900/30">
+          {regions.map((r) => {
+            const reg = REGULATIONS_BY_REGION[r];
+            return (
+              <div key={r} className="bg-card p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">{reg.flag}</span>
+                    <p className="font-semibold text-sm">{reg.countryName}</p>
+                  </div>
+                  <Badge variant="outline" className="text-[10px] py-0 h-4 gap-0.5"><Landmark className="h-2.5 w-2.5" /> {reg.region}</Badge>
+                </div>
+                <p className="text-[11px] text-muted-foreground mb-2">{reg.authority}</p>
+                <p className="text-xs text-muted-foreground leading-snug line-clamp-2 mb-2">{reg.legalFramework}</p>
+                <div className="flex flex-wrap gap-1.5 text-[10px]">
+                  <Badge variant="secondary" className="py-0 h-4 gap-0.5"><BookOpen className="h-2.5 w-2.5" /> {reg.currentLaws.length} statutes</Badge>
+                  <Badge variant="secondary" className="py-0 h-4 gap-0.5"><Gavel className="h-2.5 w-2.5" /> {reg.recentRulings.length} rulings</Badge>
+                  <Badge variant="secondary" className="py-0 h-4 gap-0.5"><Handshake className="h-2.5 w-2.5" /> {reg.ftaPartners.length} FTAs</Badge>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* FTA preferential advisory banner                                    */
+/* ------------------------------------------------------------------ */
+
+function FtaAdvisoryBanner({
+  fta, currency, dutyTotal,
+}: {
+  fta: FtaAdvisory; currency: string; dutyTotal: number;
+}) {
+  // Preferential duty = MFN-scaled duty using the preferential rate / MFN rate ratio
+  const prefDuty = dutyTotal * (fta.preferentialRate / Math.max(0.0001, fta.mfnRate || 1));
+  const saving = Math.max(0, dutyTotal - prefDuty);
+  const pctSaved = dutyTotal > 0 ? (saving / dutyTotal) * 100 : 0;
+  return (
+    <div className="mb-3 rounded-lg border border-emerald-300/70 dark:border-emerald-800/50 bg-gradient-to-br from-emerald-50/80 to-teal-50/40 dark:from-emerald-950/30 dark:to-teal-950/15 p-3">
+      <div className="flex items-start gap-3">
+        <div className="h-9 w-9 rounded-full bg-emerald-600/15 grid place-items-center shrink-0"><Handshake className="h-5 w-5 text-emerald-600 dark:text-emerald-400" /></div>
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white gap-1"><Handshake className="h-3 w-3" /> {fta.agreementShortName}</Badge>
+            <span className="text-sm font-semibold">{fta.agreementName}</span>
+            {fta.preferentialType === 'free' && <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3" /> Duty-free</Badge>}
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed mb-2">
+            Origin <span className="font-mono font-medium">{fta.originISO2}</span> → Destination <span className="font-mono font-medium">{fta.destinationISO2}</span>. Preferential rate <strong className="text-emerald-700 dark:text-emerald-300">{fmtPct(fta.preferentialRate)}</strong> vs MFN <strong>{fmtPct(fta.mfnRate)}</strong> — saves <strong className="text-emerald-700 dark:text-emerald-300">{fmtMoney(saving, currency)}</strong> ({pctSaved.toFixed(1)}% of duty) when claimed.
+          </p>
+          <div className="rounded-md bg-background/60 dark:bg-background/40 border border-emerald-200/50 dark:border-emerald-900/30 p-2 text-[11px] text-muted-foreground leading-snug">
+            <p className="flex items-center gap-1 mb-0.5"><Scale className="h-3 w-3 text-emerald-600 dark:text-emerald-400" /> <strong className="text-foreground">Rule of origin:</strong> {fta.ruleOfOriginSummary}</p>
+            <p className="text-[10px]">{fta.notes}</p>
+            {fta.alternatives.length > 0 && (
+              <p className="mt-1 text-[10px]">Also eligible under: {fta.alternatives.map((a) => `${a.agreementShortName} (${fmtPct(a.preferentialRate)})`).join(' · ')}</p>
+            )}
+          </div>
+          <p className="mt-1.5 text-[10px] text-amber-700 dark:text-amber-400 flex items-center gap-1"><AlertTriangle className="h-2.5 w-2.5" /> Claiming requires a valid proof of origin (self-declaration / certificate) &amp; goods must meet the rule. No proof → pay MFN.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Detailed Rulings & Updated Import Laws panel (per region)          */
+/* ------------------------------------------------------------------ */
+
+function RegulationsPanel({ region }: { region: 'US' | 'UK' | 'EU' | 'AU' }) {
+  const reg = REGULATIONS_BY_REGION[region];
+  if (!reg) return null;
+  const catColor: Record<string, string> = {
+    tariff: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300',
+    procedure: 'bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300',
+    origin: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300',
+    enforcement: 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300',
+    ruling: 'bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300',
+    agreement: 'bg-teal-100 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300',
+  };
+  return (
+    <Card className="border-emerald-200/60 dark:border-emerald-900/40">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2"><Gavel className="h-5 w-5 text-emerald-600 dark:text-emerald-400" /> Detailed Rulings &amp; Updated Import Laws</CardTitle>
+            <CardDescription className="mt-1">{reg.flag} {reg.countryName} · authority: {reg.authority}</CardDescription>
+          </div>
+          <Badge variant="outline" className="gap-1"><Landmark className="h-3 w-3" /> {reg.region}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        <p className="px-4 pb-3 text-xs text-muted-foreground leading-relaxed border-b border-emerald-100 dark:border-emerald-900/30">{reg.legalFramework}</p>
+        <Accordion type="multiple" defaultValue={['laws', 'rulings']} className="w-full">
+          <AccordionItem value="laws" className="border-b border-emerald-100 dark:border-emerald-900/30">
+            <AccordionTrigger className="px-4 py-3 text-sm hover:no-underline hover:bg-emerald-50/40 dark:hover:bg-emerald-950/15">
+              <span className="flex items-center gap-2"><BookOpen className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> Current statutes &amp; tariff laws ({reg.currentLaws.length})</span>
+            </AccordionTrigger>
+            <AccordionContent className="px-4 pb-3">
+              <ul className="space-y-2.5">
+                {reg.currentLaws.map((law) => (
+                  <li key={law.id} className="rounded-md border border-emerald-100/70 dark:border-emerald-900/30 bg-emerald-50/30 dark:bg-emerald-950/10 p-2.5">
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <p className="text-sm font-medium leading-tight">{law.title}</p>
+                      <Badge className={`shrink-0 text-[10px] py-0 h-4 ${catColor[law.category] ?? catColor.tariff}`}>{law.category}</Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground font-mono mb-1">{law.citation} · effective {law.effectiveDate}</p>
+                    <p className="text-xs text-muted-foreground leading-snug">{law.summary}</p>
+                    {law.url && <a href={law.url} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[11px] text-emerald-700 dark:text-emerald-300 hover:underline"><ExternalLink className="h-3 w-3" /> official text</a>}
+                  </li>
+                ))}
+              </ul>
+            </AccordionContent>
+          </AccordionItem>
+
+          <AccordionItem value="rulings" className="border-b border-emerald-100 dark:border-emerald-900/30">
+            <AccordionTrigger className="px-4 py-3 text-sm hover:no-underline hover:bg-emerald-50/40 dark:hover:bg-emerald-950/15">
+              <span className="flex items-center gap-2"><Gavel className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> Recent binding rulings &amp; tariff notices ({reg.recentRulings.length})</span>
+            </AccordionTrigger>
+            <AccordionContent className="px-4 pb-3">
+              <ul className="space-y-2.5">
+                {reg.recentRulings.map((r) => (
+                  <li key={r.id} className="rounded-md border border-amber-100/70 dark:border-amber-900/30 bg-amber-50/30 dark:bg-amber-950/10 p-2.5">
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <p className="text-sm font-medium leading-tight">{r.title}</p>
+                      <Badge className={`shrink-0 text-[10px] py-0 h-4 ${catColor[r.category] ?? catColor.ruling}`}>{r.category}</Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground font-mono mb-1">{r.citation} · {r.effectiveDate}</p>
+                    <p className="text-xs text-muted-foreground leading-snug">{r.summary}</p>
+                    {r.url && <a href={r.url} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[11px] text-emerald-700 dark:text-emerald-300 hover:underline"><ExternalLink className="h-3 w-3" /> ruling text</a>}
+                  </li>
+                ))}
+              </ul>
+            </AccordionContent>
+          </AccordionItem>
+
+          <AccordionItem value="fta" className="border-b-0">
+            <AccordionTrigger className="px-4 py-3 text-sm hover:no-underline hover:bg-emerald-50/40 dark:hover:bg-emerald-950/15">
+              <span className="flex items-center gap-2"><Handshake className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> FTA partners ({reg.ftaPartners.length})</span>
+            </AccordionTrigger>
+            <AccordionContent className="px-4 pb-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {reg.ftaPartners.map((p, i) => (
+                  <div key={i} className="rounded-md border border-emerald-100/70 dark:border-emerald-900/30 bg-emerald-50/30 dark:bg-emerald-950/10 p-2 text-xs">
+                    <p className="font-medium">{p.agreement}</p>
+                    <p className="text-muted-foreground">{p.partner} — <span className={p.status.toLowerCase().includes('in force') ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-400'}>{p.status}</span></p>
+                  </div>
+                ))}
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Saved calculations audit trail (updates every time a customer buys) */
+/* ------------------------------------------------------------------ */
+
+function SavedCalcsHistory({
+  items, loading, onRefresh,
+}: {
+  items: SavedCalculationItem[]; loading: boolean; onRefresh: () => void;
+}) {
+  return (
+    <Card className="border-emerald-200/60 dark:border-emerald-900/40">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-emerald-600 dark:text-emerald-400" /> Saved Calculations audit trail</CardTitle>
+            <CardDescription className="mt-1">Every landed-cost run is persisted with its FX snapshot — the list updates live each time you (or any customer) buys a calculation.</CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="gap-1"><Database className="h-3 w-3" /> {items.length} record{items.length === 1 ? '' : 's'}</Badge>
+            <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading} className="gap-1.5"><RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh</Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        {items.length === 0 ? (
+          <div className="p-6 text-center text-sm text-muted-foreground">
+            {loading ? <><Loader2 className="h-4 w-4 animate-spin text-emerald-600 inline mr-2" /> loading audit trail…</> : 'No calculations saved yet — run the LCIE agent above to record the first audit entry.'}
+          </div>
+        ) : (
+          <div className="max-h-96 overflow-y-auto lcie-scroll border-t">
+            <Table>
+              <TableHeader className="sticky top-0 bg-muted/60 backdrop-blur z-10">
+                <TableRow>
+                  <TableHead className="w-32">When</TableHead>
+                  <TableHead className="min-w-[120px]">PO #</TableHead>
+                  <TableHead className="min-w-[140px]">Route</TableHead>
+                  <TableHead className="text-right w-28">Subtotal</TableHead>
+                  <TableHead className="text-right w-28">Duty</TableHead>
+                  <TableHead className="text-right w-32">Total</TableHead>
+                  <TableHead className="text-right w-20">Eff.</TableHead>
+                  <TableHead className="w-28">FTA</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((it) => (
+                  <TableRow key={it.id}>
+                    <TableCell className="text-[11px] text-muted-foreground font-mono">
+                      <Clock className="h-3 w-3 inline mr-1 text-emerald-600/70" />
+                      {new Date(it.createdAt).toLocaleString(undefined, { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{it.poNumber}</TableCell>
+                    <TableCell>
+                      <p className="text-xs">
+                        <span className="font-mono">{it.originCountry ?? '?'}</span> → {it.destinationLabel ?? it.destinationCountry ?? '?'}
+                        <span className="text-muted-foreground"> ({it.lineItemCount} line{it.lineItemCount === 1 ? '' : 's'})</span>
+                      </p>
+                      {it.fx?.rate && it.fx.rate !== 1 && (
+                        <p className="text-[10px] text-muted-foreground font-mono">FX 1 {it.fx.from} = {it.fx.rate.toFixed(4)} {it.fx.to} · {it.fx.source}</p>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs">{fmtMoney(it.subtotal, it.destinationCurrency ?? 'USD')}</TableCell>
+                    <TableCell className="text-right font-mono text-xs">{fmtMoney(it.dutyTotal, it.destinationCurrency ?? 'USD')}</TableCell>
+                    <TableCell className="text-right font-mono text-xs font-semibold text-emerald-700 dark:text-emerald-300">{fmtMoney(it.totalLandedCost, it.destinationCurrency ?? 'USD')}</TableCell>
+                    <TableCell className="text-right font-mono text-xs">{fmtPct(it.effectiveRate)}</TableCell>
+                    <TableCell>
+                      {it.ftaName ? (
+                        <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white gap-1 text-[10px] py-0 h-4"><Handshake className="h-2.5 w-2.5" /> {it.ftaName}</Badge>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">MFN</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
