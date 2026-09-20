@@ -794,7 +794,7 @@ function LandedCostInputsForm({
                     <TooltipContent>
                       <p className="max-w-[200px] text-xs">
                         {f.hint}
-                        {fieldDisabled && <><br /><span className="text-amber-700 dark:text-amber-400">Greyed: under {incoterm ?? 'this Incoterm'}, the seller pays this charge — it's already in the unit price.</span>}
+                        {fieldDisabled && (<><br /><span className="text-amber-700 dark:text-amber-400">Greyed: under {incoterm ?? 'this Incoterm'}, the seller pays this charge — it&apos;s already in the unit price.</span></>)}
                       </p>
                     </TooltipContent>
                   </Tooltip>
