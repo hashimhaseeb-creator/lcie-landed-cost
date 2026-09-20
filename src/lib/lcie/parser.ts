@@ -185,8 +185,72 @@ function parsePlainText(text: string): { items: LineItemInput[]; meta: Partial<P
   let incotermInferred = false;
   let originInferred = false;
 
+  // ---- Address-block extraction for origin/destination inference ----
+  // When the PO has explicit "Ship From:" / "Bill To:" / "Consignee:" /
+  // "Sold To:" / "Shipper:" / "Exporter:" / "Importer:" blocks, scan the
+  // address text for city + country mentions and use them to infer origin
+  // (ship-from) + destination (bill-to / consignee).
+  const SHIP_FROM_LABELS = ['ship from', 'shipper', 'exporter', 'sold by', 'vendor', 'seller', 'from:', 'ship-out'];
+  const BILL_TO_LABELS = ['bill to', 'consignee', 'sold to', 'ship to', 'importer', 'buyer', 'to:', 'deliver to', 'ship-in'];
+  let inShipFromBlock = false;
+  let inBillToBlock = false;
+  let shipFromAddress: string[] = [];
+  let billToAddress: string[] = [];
+
+  const addressCountryIso = (addrText: string): string | null => {
+    // 1. Try ISO-2 country code (e.g. "DE", "CN")
+    const isoMatch = addrText.match(/\b([A-Z]{2})\b(?:\s+\d{4,6})?\s*$/);
+    if (isoMatch) {
+      const cc = isoMatch[1].toUpperCase();
+      // Sanity-check against a small whitelist of likely codes
+      const validIso = new Set(['US','CA','MX','GB','UK','DE','FR','NL','IT','ES','BE','AT','IE','PT','GR','SE','DK','FI','PL','CZ','HU','RO','BG','HR','SK','SI','LT','LV','EE','LU','MT','CY','AU','NZ','CN','JP','KR','IN','PK','BD','VN','TH','ID','MY','SG','PH','TR','AE','SA','BR','AR','CL','CO','PE','EG','ZA','NG','KE','CH','NO']);
+      if (validIso.has(cc)) return cc;
+    }
+    // 2. Try country name (e.g. "Germany", "China")
+    const lower = addrText.toLowerCase();
+    const countryNames: Record<string, string> = {
+      'united states': 'US', 'usa': 'US', 'u.s.a.': 'US', 'u.s.': 'US', 'america': 'US',
+      'united kingdom': 'GB', 'uk': 'GB', 'u.k.': 'GB', 'britain': 'GB', 'england': 'GB',
+      'germany': 'DE', 'france': 'FR', 'netherlands': 'NL', 'holland': 'NL',
+      'italy': 'IT', 'spain': 'ES', 'belgium': 'BE', 'austria': 'AT',
+      'ireland': 'IE', 'portugal': 'PT', 'greece': 'GR', 'sweden': 'SE',
+      'denmark': 'DK', 'finland': 'FI', 'poland': 'PL', 'czechia': 'CZ', 'czech republic': 'CZ',
+      'hungary': 'HU', 'romania': 'RO', 'bulgaria': 'BG', 'croatia': 'HR',
+      'australia': 'AU', 'new zealand': 'NZ', 'china': 'CN', 'prc': 'CN',
+      'peoples republic of china': 'CN', "people's republic of china": 'CN',
+      'japan': 'JP', 'korea': 'KR', 'south korea': 'KR', 'india': 'IN',
+      'pakistan': 'PK', 'bangladesh': 'BD', 'vietnam': 'VN', 'thailand': 'TH',
+      'indonesia': 'ID', 'malaysia': 'MY', 'singapore': 'SG', 'philippines': 'PH',
+      'turkey': 'TR', 'türkiye': 'TR', 'uae': 'AE', 'united arab emirates': 'AE',
+      'saudi arabia': 'SA', 'brazil': 'BR', 'argentina': 'AR', 'chile': 'CL',
+      'colombia': 'CO', 'peru': 'PE', 'canada': 'CA', 'mexico': 'MX',
+    };
+    for (const [name, iso] of Object.entries(countryNames)) {
+      if (lower.includes(name)) return iso;
+    }
+    // 3. Try city-name lookup against the existing CITY_TO_ISO map
+    for (const [city, iso] of Object.entries(CITY_TO_ISO)) {
+      if (lower.includes(city)) return iso;
+    }
+    return null;
+  };
+
   const setMetaFromLine = (line: string): boolean => {
     // returns true if the line was consumed as metadata
+
+    // ─── Address-block tracking ───
+    // A line like "Ship From:" or "Bill To:" starts a multi-line address block
+    // that runs until the next blank line or next label.
+    const lowerLine = line.toLowerCase();
+    const startsShipFrom = SHIP_FROM_LABELS.some((l) => lowerLine.startsWith(l) || lowerLine === l.replace(':', ''));
+    const startsBillTo = BILL_TO_LABELS.some((l) => lowerLine.startsWith(l) || lowerLine === l.replace(':', ''));
+    if (startsShipFrom) { inShipFromBlock = true; inBillToBlock = false; }
+    if (startsBillTo) { inBillToBlock = true; inShipFromBlock = false; }
+    // Blank line ends an address block
+    if (line.trim() === '') { inShipFromBlock = false; inBillToBlock = false; }
+    if (inShipFromBlock && !startsShipFrom) { shipFromAddress.push(line); }
+    if (inBillToBlock && !startsBillTo) { billToAddress.push(line); }
+
     const poNum = line.match(/(?:purchase\s+order|po\s*(?:no\.?|number)?|p\.o\.?)\s*[:#]?\s*([A-Z0-9][A-Z0-9\-_]{3,})/i);
     if (poNum && !meta.poNumber) { meta.poNumber = poNum[1]; return true; }
     const supplier = line.match(/^supplier\s*[:\-]\s*(.+)$/i);
@@ -300,6 +364,18 @@ function parsePlainText(text: string): { items: LineItemInput[]; meta: Partial<P
       items.push(parsed);
       autoLine = parsed.lineNumber + 1;
     }
+  }
+  // ---- Post-loop address-block inference (inside parsePlainText so we can
+  // access the accumulated shipFromAddress + billToAddress arrays) ----
+  // If the inline scans didn't pick up origin/destination, scan the address
+  // blocks for country/city mentions.
+  if (!meta.originCountry && shipFromAddress.length > 0) {
+    const iso = addressCountryIso(shipFromAddress.join(' '));
+    if (iso) { meta.originCountry = iso; originInferred = true; }
+  }
+  if (!meta.destinationCountry && billToAddress.length > 0) {
+    const iso = addressCountryIso(billToAddress.join(' '));
+    if (iso) { meta.destinationCountry = iso; }
   }
   return { items, meta };
 }
@@ -533,7 +609,8 @@ export function parsePoPayload(
     // shows "—" instead of a fake default, and the user must set them via
     // the meta field on the upload-po route OR via the destination dropdown
     // before running the agent. The user can still override via the explicit
-    // meta field on the upload-po route.
+    // meta field on the upload-po route. Address-block inference
+    // (Ship From / Bill To / Consignee) is handled inside parsePlainText.
     originCountry: meta?.originCountry ?? extractedMeta.originCountry ?? undefined,
     destinationCountry: meta?.destinationCountry ?? extractedMeta.destinationCountry ?? undefined,
     currency: meta?.currency ?? extractedMeta.currency ?? 'USD',

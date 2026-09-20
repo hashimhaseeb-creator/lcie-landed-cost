@@ -32,8 +32,53 @@ export async function calculateLandedCost(
   });
   if (!po) throw new Error('Purchase order not found.');
 
+  // ---- Local-PO short-circuit: if origin country == destination country, no
+  // customs border is crossed → no duty/VAT/MPF/HMF applies. Return a "Not
+  // required" response immediately so the UI can prompt the user, instead of
+  // computing a meaningless duty stack. ----
+  const poOriginCC = (po.originCountry ?? '').toUpperCase().trim();
+  const poDestCC = (po.destinationCountry ?? '').toUpperCase().trim();
+  if (poOriginCC && poDestCC && poOriginCC === poDestCC) {
+    return {
+      poId,
+      poNumber: po.poNumber,
+      originCurrency: po.currency ?? 'USD',
+      destination: {
+        countryCode: poDestCC, countryName: poDestCC, region: 'US' as Region,
+        currency: po.currency ?? 'USD', vatRate: 0, flag: '🏠', label: `${poDestCC} (local shipment)`,
+      },
+      fx: null,
+      calculation: {
+        region: 'US' as Region, label: `${poDestCC} (local shipment)`, flag: '🏠',
+        currency: po.currency ?? 'USD', subtotal: 0, dutyTotal: 0, section301Total: 0,
+        ieepaTotal: 0, chinaReciprocalTotal: 0, cnhkEoTotal: 0, anyCountryTotal: 0,
+        vatTotal: 0, mpfTotal: 0, hmfTotal: 0, hmfApplies: false, modeOfTransport: inputs.modeOfTransport ?? 'Ocean',
+        otherLevies: 0, freight: 0, insurance: 0, otherImportCharges: 0,
+        totalLandedCost: 0, effectiveRate: 0,
+        lineBreakdown: [],
+        waterfall: [{
+          label: '🏠 Not required — local shipment (no customs border crossed)',
+          amount: 0, cumulative: 0,
+          note: `Origin country (${poOriginCC}) == Destination country (${poDestCC}). No import/export duty, VAT, GST, MPF, or HMF applies. Only domestic sales tax (out of scope for LCIE) may apply.`,
+        }],
+        notes: 'Local shipment — origin and destination are the same country. No customs duty / VAT / MPF / HMF applies. If you expected an international shipment, check the PO\'s origin and destination country fields.',
+      },
+      calculatedAt: new Date().toISOString(),
+    };
+  }
+
+  // ---- Missing destination short-circuit: if the PO didn't specify a
+  // destination country (and the user didn't override via the UI dropdown),
+  // return an explicit error so the UI can prompt the user to pick one. ----
+  if (!poDestCC) {
+    throw new Error('Destination country not specified — the parser could not infer it from the PO text. Please select a destination country from the dropdown above before running the LCIE agent.');
+  }
+  if (!poOriginCC) {
+    throw new Error('Origin country not specified — the parser could not infer it from the PO text. Please select an origin country from the dropdown above before running the LCIE agent.');
+  }
+
   // ---- resolve destination region + currency + VAT ----
-  const dest = resolveDestination(po.destinationCountry ?? 'US');
+  const dest = resolveDestination(poDestCC);
   const region: Region = dest.region;
 
   // ---- user-supplied landed-cost inputs (default to PO-level values) ----

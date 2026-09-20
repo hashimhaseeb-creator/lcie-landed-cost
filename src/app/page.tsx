@@ -72,6 +72,29 @@ export default function Home() {
     rates: { key: string; label: string; rate: number; effectiveDate: string; citation: string; url: string }[];
   } | null>(null);
   const [rateRefreshLoading, setRateRefreshLoading] = useState(false);
+  // User overrides for the parser-inferred origin / destination / incoterm.
+  // When set, these are passed to the calculate API as part of `inputs` so
+  // the calculator uses the user's selection instead of the parser's guess.
+  const [originOverride, setOriginOverride] = useState<string | undefined>(undefined);
+  const [destOverride, setDestOverride] = useState<string | undefined>(undefined);
+  const [incotermOverride, setIncotermOverride] = useState<string | undefined>(undefined);
+
+  // PATCH /api/lcie/po-meta — persists a dropdown override back to the PO
+  // record so the next agent + calculate call uses the user's selection.
+  const patchPoMeta = useCallback(async (patch: { originCountry?: string; destinationCountry?: string; incoterm?: string }) => {
+    if (!po) return;
+    try {
+      const r = await fetch('/api/lcie/po-meta', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ poId: po.id, ...patch }),
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      // Refresh local po state so the UI reflects the persisted values
+      if (d?.po) setPo({ ...po, originCountry: d.po.originCountry ?? undefined, destinationCountry: d.po.destinationCountry ?? undefined, incoterm: d.po.incoterm ?? undefined });
+    } catch { /* swallow — non-fatal */ }
+  }, [po]);
   const cbpInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -162,6 +185,7 @@ export default function Home() {
   const reset = () => {
     setPo(null); setAgentResult(null); setCalcResult(null); setVisibleSteps([]);
     setError(null); setPasteText(''); setInputs({});
+    setOriginOverride(undefined); setDestOverride(undefined); setIncotermOverride(undefined);
   };
 
   const uploadPayload = useCallback(async (rawText: string, fileName?: string) => {
@@ -474,14 +498,90 @@ export default function Home() {
                     <span className="font-mono font-semibold text-lg text-emerald-700 dark:text-emerald-300">{fmtMoney(po.lineItems.reduce((s, l) => s + l.totalValue, 0), po.currency)}</span>
                   </div>
                 </CardContent>
-                <CardFooter className="border-t bg-muted/30 p-4 flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-sm text-muted-foreground">Ready for the LCIE AI agent to determine the destination duty stack.</p>
-                  <Button onClick={handleRunAgent} disabled={agentLoading || calcLoading} size="lg" className="gap-2">{agentLoading || calcLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}{agentLoading ? 'Agent classifying…' : calcLoading ? 'Calculating landed cost…' : 'Run LCIE AI Agent'}</Button>
+                <CardFooter className="border-t bg-muted/30 p-4 flex flex-col gap-3">
+                  {/* Origin + Destination override dropdowns — visible when the parser
+                      couldn't infer them OR when the user wants to override. */}
+                  <div className="flex flex-wrap items-end gap-3 w-full">
+                    <div className="flex flex-col gap-1">
+                      <Label className="text-xs flex items-center gap-1 text-muted-foreground"><MapPin className="h-3 w-3" /> Origin country {po.originCountry ? <span className="text-emerald-700 dark:text-emerald-300 font-medium">(inferred)</span> : <span className="text-amber-700 dark:text-amber-400 font-medium">(not set — pick one)</span>}</Label>
+                      <select
+                        value={originOverride ?? po.originCountry ?? ''}
+                        onChange={(e) => { const v = e.target.value || undefined; setOriginOverride(v); patchPoMeta({ originCountry: v }); }}
+                        className="rounded-md border border-emerald-300/60 dark:border-emerald-800/60 bg-background px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      >
+                        <option value="">— select origin —</option>
+                        <option value="CN">🇨🇳 China (CN)</option>
+                        <option value="HK">🇭🇰 Hong Kong (HK)</option>
+                        <option value="TW">🇹🇼 Taiwan (TW)</option>
+                        <option value="JP">🇯🇵 Japan (JP)</option>
+                        <option value="KR">🇰🇷 Korea (KR)</option>
+                        <option value="VN">🇻🇳 Vietnam (VN)</option>
+                        <option value="TH">🇹🇭 Thailand (TH)</option>
+                        <option value="ID">🇮🇩 Indonesia (ID)</option>
+                        <option value="MY">🇲🇾 Malaysia (MY)</option>
+                        <option value="IN">🇮🇳 India (IN)</option>
+                        <option value="PK">🇵🇰 Pakistan (PK)</option>
+                        <option value="BD">🇧🇩 Bangladesh (BD)</option>
+                        <option value="TR">🇹🇷 Turkey (TR)</option>
+                        <option value="DE">🇩🇪 Germany (DE)</option>
+                        <option value="FR">🇫🇷 France (FR)</option>
+                        <option value="IT">🇮🇹 Italy (IT)</option>
+                        <option value="ES">🇪🇸 Spain (ES)</option>
+                        <option value="NL">🇳🇱 Netherlands (NL)</option>
+                        <option value="GB">🇬🇧 United Kingdom (GB)</option>
+                        <option value="US">🇺🇸 United States (US)</option>
+                        <option value="CA">🇨🇦 Canada (CA)</option>
+                        <option value="MX">🇲🇽 Mexico (MX)</option>
+                        <option value="BR">🇧🇷 Brazil (BR)</option>
+                        <option value="AU">🇦🇺 Australia (AU)</option>
+                        <option value="AE">🇦🇪 UAE (AE)</option>
+                        <option value="SA">🇸🇦 Saudi Arabia (SA)</option>
+                      </select>
+                    </div>
+                    <div className="text-muted-foreground">→</div>
+                    <div className="flex flex-col gap-1">
+                      <Label className="text-xs flex items-center gap-1 text-muted-foreground"><MapPin className="h-3 w-3" /> Destination country {po.destinationCountry ? <span className="text-emerald-700 dark:text-emerald-300 font-medium">(inferred)</span> : <span className="text-amber-700 dark:text-amber-400 font-medium">(not set — pick one)</span>}</Label>
+                      <select
+                        value={destOverride ?? po.destinationCountry ?? ''}
+                        onChange={(e) => { const v = e.target.value || undefined; setDestOverride(v); patchPoMeta({ destinationCountry: v }); }}
+                        className="rounded-md border border-emerald-300/60 dark:border-emerald-800/60 bg-background px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      >
+                        <option value="">— select destination —</option>
+                        <option value="US">🇺🇸 United States (US) — HTS</option>
+                        <option value="GB">🇬🇧 United Kingdom (GB) — Global Tariff</option>
+                        <option value="DE">🇩🇪 Germany (DE) — EU TARIC</option>
+                        <option value="FR">🇫🇷 France (FR) — EU TARIC</option>
+                        <option value="IT">🇮🇹 Italy (IT) — EU TARIC</option>
+                        <option value="ES">🇪🇸 Spain (ES) — EU TARIC</option>
+                        <option value="NL">🇳🇱 Netherlands (NL) — EU TARIC</option>
+                        <option value="AU">🇦🇺 Australia (AU) — ABF</option>
+                        <option value="CA">🇨🇦 Canada (CA)</option>
+                        <option value="MX">🇲🇽 Mexico (MX)</option>
+                      </select>
+                    </div>
+                    {/* Local-PO warning — if origin === destination, calculator will return "Not required" */}
+                    {(originOverride ?? po.originCountry) && (destOverride ?? po.destinationCountry) && (originOverride ?? po.originCountry) === (destOverride ?? po.destinationCountry) && (
+                      <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 gap-1"><AlertTriangle className="h-3 w-3" /> Local shipment — no customs border. Calculator will return "Not required".</Badge>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-3 w-full">
+                    <p className="text-sm text-muted-foreground">Ready for the LCIE AI agent to determine the destination duty stack.</p>
+                    <Button onClick={handleRunAgent} disabled={agentLoading || calcLoading} size="lg" className="gap-2">{agentLoading || calcLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}{agentLoading ? 'Agent classifying…' : calcLoading ? 'Calculating landed cost…' : 'Run LCIE AI Agent'}</Button>
+                  </div>
                 </CardFooter>
               </Card>
 
               {/* Editable landed-cost inputs */}
-              <LandedCostInputsForm inputs={inputs} setInputs={setInputs} currency={inputCur} onRecalculate={handleRecalculate} disabled={calcLoading || agentLoading} hasResult={!!calcResult} />
+              <LandedCostInputsForm
+                inputs={inputs}
+                setInputs={setInputs}
+                currency={inputCur}
+                onRecalculate={handleRecalculate}
+                disabled={calcLoading || agentLoading}
+                hasResult={!!calcResult}
+                incoterm={incotermOverride ?? po.incoterm}
+                setIncoterm={(v) => { setIncotermOverride(v); patchPoMeta({ incoterm: v }); }}
+              />
             </>
           )}
 
@@ -586,23 +686,50 @@ export default function Home() {
 /* ------------------------------------------------------------------ */
 
 function LandedCostInputsForm({
-  inputs, setInputs, currency, onRecalculate, disabled, hasResult,
+  inputs, setInputs, currency, onRecalculate, disabled, hasResult, incoterm, setIncoterm,
 }: {
   inputs: LandedCostInputs; setInputs: (i: LandedCostInputs) => void;
   currency: string; onRecalculate: () => void; disabled: boolean; hasResult: boolean;
+  incoterm: string | undefined; setIncoterm: (i: string | undefined) => void;
 }) {
   const set = (k: keyof LandedCostInputs, v: string) => {
     const n = v === '' ? undefined : parseFloat(v);
     setInputs({ ...inputs, [k]: Number.isFinite(n) ? n : undefined });
   };
-  const fields: { key: keyof LandedCostInputs; label: string; icon: typeof Truck; hint: string }[] = [
-    { key: 'freight', label: 'Freight', icon: Ship, hint: 'Ocean / air freight to destination port' },
-    { key: 'insurance', label: 'Insurance', icon: ShieldCheck, hint: 'Marine / cargo insurance' },
-    { key: 'otherCharges', label: 'Other handling', icon: Boxes, hint: 'Packing, handling, terminal' },
-    { key: 'customsBrokerFee', label: 'Customs broker fee', icon: FileCheck, hint: 'Entry filing / broker' },
-    { key: 'documentationFee', label: 'Documentation fee', icon: FileText, hint: 'B/L, cert of origin, docs' },
-    { key: 'dutyAdvanceFee', label: 'Duty advance fee', icon: Wallet, hint: 'Duty paid on your behalf' },
-    { key: 'harborOrPortFee', label: 'Harbor / port fee', icon: Anchor, hint: 'Port dues, wharfage' },
+
+  // Incoterms 2020 — who pays freight + insurance?
+  // EXW/FCA/FAS/FOB → buyer arranges + pays freight + insurance
+  // CFR/CPT        → seller pays freight, buyer pays insurance
+  // CIF/CIP        → seller pays both freight + insurance (greyed out for buyer)
+  // DAP/DPU/DDP    → seller pays everything (freight + insurance + duties)
+  const INCOTERMS_2020: { code: string; label: string; freightBuyer: boolean; insuranceBuyer: boolean }[] = [
+    { code: 'EXW', label: 'EXW — Ex Works',                freightBuyer: true,  insuranceBuyer: true  },
+    { code: 'FCA', label: 'FCA — Free Carrier',            freightBuyer: true,  insuranceBuyer: true  },
+    { code: 'FAS', label: 'FAS — Free Alongside Ship',    freightBuyer: true,  insuranceBuyer: true  },
+    { code: 'FOB', label: 'FOB — Free On Board',           freightBuyer: true,  insuranceBuyer: true  },
+    { code: 'CFR', label: 'CFR — Cost & Freight',          freightBuyer: false, insuranceBuyer: true  },
+    { code: 'CIF', label: 'CIF — Cost Insurance Freight',   freightBuyer: false, insuranceBuyer: false },
+    { code: 'CPT', label: 'CPT — Carriage Paid To',        freightBuyer: false, insuranceBuyer: true  },
+    { code: 'CIP', label: 'CIP — Carriage & Insurance',    freightBuyer: false, insuranceBuyer: false },
+    { code: 'DAP', label: 'DAP — Delivered At Place',     freightBuyer: false, insuranceBuyer: false },
+    { code: 'DPU', label: 'DPU — Delivered Place Unloaded',freightBuyer: false, insuranceBuyer: false },
+    { code: 'DDP', label: 'DDP — Delivered Duty Paid',     freightBuyer: false, insuranceBuyer: false },
+  ];
+  const incotermConfig = INCOTERMS_2020.find((i) => i.code === (incoterm ?? '')) ?? null;
+  const freightDisabled = incotermConfig ? !incotermConfig.freightBuyer : false;
+  const insuranceDisabled = incotermConfig ? !incotermConfig.insuranceBuyer : false;
+  // For DDP, the seller also pays the import duty + VAT + MPF + HMF — the
+  // calculator still computes them so the user can see what the seller is
+  // covering, but the fields are visually marked as "seller-paid".
+
+  const fields: { key: keyof LandedCostInputs; label: string; icon: typeof Truck; hint: string; disabledByIncoterm?: boolean }[] = [
+    { key: 'freight',         label: 'Freight',          icon: Ship,        hint: 'Ocean / air freight to destination port', disabledByIncoterm: freightDisabled },
+    { key: 'insurance',       label: 'Insurance',         icon: ShieldCheck, hint: 'Marine / cargo insurance',              disabledByIncoterm: insuranceDisabled },
+    { key: 'otherCharges',    label: 'Other handling',    icon: Boxes,        hint: 'Packing, handling, terminal' },
+    { key: 'customsBrokerFee',label: 'Customs broker fee',icon: FileCheck,   hint: 'Entry filing / broker' },
+    { key: 'documentationFee',label: 'Documentation fee', icon: FileText,    hint: 'B/L, cert of origin, docs' },
+    { key: 'dutyAdvanceFee',  label: 'Duty advance fee',  icon: Wallet,      hint: 'Duty paid on your behalf' },
+    { key: 'harborOrPortFee', label: 'Harbor / port fee', icon: Anchor,      hint: 'Port dues, wharfage' },
     { key: 'inlandDestinationDelivery', label: 'Inland delivery', icon: MapPin, hint: 'Port → final DC' },
   ];
   return (
@@ -612,13 +739,69 @@ function LandedCostInputsForm({
         <CardDescription>Enter every import charge that touches this shipment — all in the PO currency ({currency}). The duty stack recalculates instantly.</CardDescription>
       </CardHeader>
       <CardContent className="p-4">
+        {/* Incoterms 2020 selector — pre-selected if the parser detected one; user can override. */}
+        <div className="mb-4 rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-950/15 p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Label className="text-xs flex items-center gap-1 font-semibold">
+              <Ship className="h-3 w-3 text-emerald-600 dark:text-emerald-400" /> Incoterms 2020:
+            </Label>
+            <select
+              value={incoterm ?? ''}
+              onChange={(e) => setIncoterm(e.target.value || undefined)}
+              className="rounded-md border border-emerald-300/60 dark:border-emerald-800/60 bg-background px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="">{incoterm === undefined ? 'Select Incoterm… (parser did not detect one)' : '— None —'}</option>
+              {INCOTERMS_2020.map((i) => (
+                <option key={i.code} value={i.code}>{i.label}</option>
+              ))}
+            </select>
+            {incotermConfig && (
+              <div className="text-[11px] text-muted-foreground flex flex-wrap gap-2">
+                <Badge variant="outline" className={`gap-1 text-[10px] py-0 h-4 ${freightDisabled ? 'border-amber-300/60 text-amber-700 dark:text-amber-400' : 'border-emerald-300/60 text-emerald-700 dark:text-emerald-300'}`}>
+                  Freight {freightDisabled ? 'Seller-paid (greyed)' : 'Buyer-entered'}
+                </Badge>
+                <Badge variant="outline" className={`gap-1 text-[10px] py-0 h-4 ${insuranceDisabled ? 'border-amber-300/60 text-amber-700 dark:text-amber-400' : 'border-emerald-300/60 text-emerald-700 dark:text-emerald-300'}`}>
+                  Insurance {insuranceDisabled ? 'Seller-paid (greyed)' : 'Buyer-entered'}
+                </Badge>
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {fields.map((f) => (
-            <div key={f.key}>
-              <Label className="text-xs flex items-center gap-1 mb-1"><f.icon className="h-3 w-3 text-emerald-600 dark:text-emerald-400" /> {f.label}</Label>
-              <TooltipProvider delayDuration={200}><Tooltip><TooltipTrigger asChild><Input type="number" min="0" step="0.01" value={inputs[f.key] ?? ''} onChange={(e) => set(f.key, e.target.value)} className="font-mono text-sm" placeholder="0.00" /></TooltipTrigger><TooltipContent><p className="max-w-[200px] text-xs">{f.hint}</p></TooltipContent></Tooltip></TooltipProvider>
-            </div>
-          ))}
+          {fields.map((f) => {
+            const fieldDisabled = f.disabledByIncoterm ?? false;
+            return (
+              <div key={f.key} className={fieldDisabled ? 'opacity-50' : ''}>
+                <Label className="text-xs flex items-center gap-1 mb-1">
+                  <f.icon className="h-3 w-3 text-emerald-600 dark:text-emerald-400" /> {f.label}
+                  {fieldDisabled && <span className="text-[9px] text-amber-700 dark:text-amber-400 ml-1">(seller-paid)</span>}
+                </Label>
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={fieldDisabled ? '' : (inputs[f.key] ?? '')}
+                        onChange={(e) => set(f.key, e.target.value)}
+                        disabled={fieldDisabled}
+                        className={`font-mono text-sm ${fieldDisabled ? 'bg-muted/60 cursor-not-allowed' : ''}`}
+                        placeholder={fieldDisabled ? '— greyed —' : '0.00'}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="max-w-[200px] text-xs">
+                        {f.hint}
+                        {fieldDisabled && <><br /><span className="text-amber-700 dark:text-amber-400">Greyed: under {incoterm ?? 'this Incoterm'}, the seller pays this charge — it's already in the unit price.</span>}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            );
+          })}
         </div>
 
         {/* Mode of transport — drives whether HMF (0.125%) is assessed (ocean only, 19 U.S.C. §4462) */}
