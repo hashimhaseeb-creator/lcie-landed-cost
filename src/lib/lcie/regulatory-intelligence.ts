@@ -135,7 +135,7 @@ export const BASELINE_RATES: RateEntry[] = [
     region: 'UK',
     rate: 0.20,
     effectiveDate: '2011-01-04',
-    citation: 'HMRC 2024-2025 VAT rate schedule — standard 20% (unchanged since 2011); reduced 5% on children's car seats / domestic fuel; zero-rated food/books',
+    citation: 'HMRC 2024-2025 VAT rate schedule — standard 20% (unchanged since 2011); reduced 5% on children\'s car seats / domestic fuel; zero-rated food/books',
     url: 'https://www.gov.uk/vat-rates',
     lastVerifiedAt: SEP_2026_VERIFIED,
     verified: true,
