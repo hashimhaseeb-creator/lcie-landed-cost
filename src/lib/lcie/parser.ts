@@ -125,20 +125,116 @@ function parsePlainText(text: string): { items: LineItemInput[]; meta: Partial<P
   const itemLines: string[] = [];
 
   const num = (s: string | undefined) => (s ? parseFloat(s.replace(/,/g, '')) || 0 : 0);
+  // ---- Inline Incoterms inference ----
+  // Catches both "incoterm: FOB" (explicit) and "FOB Shenzhen" / "CIF Hamburg"
+  // inline patterns that appear in PO description / delivery-terms lines.
+  // Only Incoterms 2020 valid codes are recognised: EXW, FCA, FAS, FOB, CFR,
+  // CIF, CPT, CIP, DAP, DPU, DDP.
+  const INCOTERMS_REGEX = /\b(?:incoterm\s*[:\-]\s*)?(EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)\b(?:\s+[A-Z][a-zA-Z]+)?/i;
+  // ---- Origin country inference from supplier / city / port mentions ----
+  // Maps well-known supplier cities + ports to ISO-2 country codes. Only
+  // used when the PO text mentions them — never falls back to 'CN' blindly.
+  const CITY_TO_ISO: Record<string, string> = {
+    // CN
+    'shenzhen': 'CN', 'shanghai': 'CN', 'guangzhou': 'CN', 'ningbo': 'CN', 'qingdao': 'CN', 'beijing': 'CN', 'hong kong': 'CN', 'hongkong': 'CN', 'yiwu': 'CN', 'xiamen': 'CN', 'tianjin': 'CN', 'dalian': 'CN',
+    // TR
+    'istanbul': 'TR', 'izmir': 'TR', 'bursa': 'TR', 'ankara': 'TR', 'mersin': 'TR',
+    // IN
+    'mumbai': 'IN', 'delhi': 'IN', 'chennai': 'IN', 'kolkata': 'IN', 'bangalore': 'IN', 'ahmedabad': 'IN', 'surat': 'IN',
+    // PK
+    'karachi': 'PK', 'lahore': 'PK', 'faisalabad': 'PK', 'sialkot': 'PK',
+    // BD
+    'dhaka': 'BD', 'chittagong': 'BD',
+    // VN
+    'hanoi': 'VN', 'ho chi minh': 'VN', 'hcmc': 'VN', 'haiphong': 'VN',
+    // TH
+    'bangkok': 'TH', 'laem chabang': 'TH',
+    // ID
+    'jakarta': 'ID', 'surabaya': 'ID',
+    // MY
+    'kuala lumpur': 'MY', 'penang': 'MY', 'port klang': 'MY',
+    // KR
+    'seoul': 'KR', 'busan': 'KR', 'incheon': 'KR',
+    // JP
+    'tokyo': 'JP', 'osaka': 'JP', 'yokohama': 'JP', 'nagoya': 'JP', 'kobe': 'JP',
+    // DE / EU
+    'hamburg': 'DE', 'bremen': 'DE', 'munich': 'DE', 'berlin': 'DE', 'frankfurt': 'DE', 'stuttgart': 'DE',
+    'rotterdam': 'NL', 'amsterdam': 'NL',
+    'felixstowe': 'GB', 'southampton': 'GB', 'london': 'GB',
+    'le havre': 'FR', 'marseille': 'FR', 'paris': 'FR',
+    'genoa': 'IT', 'naples': 'IT', 'milan': 'IT',
+    'barcelona': 'ES', 'valencia': 'ES', 'madrid': 'ES',
+    // AU
+    'sydney': 'AU', 'melbourne': 'AU', 'brisbane': 'AU', 'fremantle': 'AU', 'perth': 'AU',
+    // US
+    'los angeles': 'US', 'long beach': 'US', 'new york': 'US', 'newark': 'US', 'savannah': 'US', 'miami': 'US', 'chicago': 'US', 'dallas': 'US', 'seattle': 'US',
+    // MX
+    'manzanillo': 'MX', 'veracruz': 'MX', 'mexico city': 'MX',
+    // BR
+    'santos': 'BR', 'são paulo': 'BR', 'rio de janeiro': 'BR',
+    // AE
+    'dubai': 'AE', 'jebel ali': 'AE', 'abu dhabi': 'AE',
+    // SA
+    'jeddah': 'SA', 'riyadh': 'SA', 'dammam': 'SA',
+  };
+  // Map of supplier-name substrings to ISO-2 (only for patterns that
+  // explicitly name the country — e.g. "Co., Ltd. China", "Industries India").
+  const SUPPLIER_COUNTRY_REGEX = /\b(?:china|prc|peoples?\s+republic\s+of\s+china|india|pakistan|bangladesh|vietnam|thailand|indonesia|malaysia|turkey|germany|netherlands|united\s+kingdom|france|italy|spain|australia|united\s+states|mexico|brazil|uae|saudi)\b/i;
+
+  // Tracks whether Incoterms was inferred from inline text vs. explicit field.
+  let incotermInferred = false;
+  let originInferred = false;
+
   const setMetaFromLine = (line: string): boolean => {
     // returns true if the line was consumed as metadata
     const poNum = line.match(/(?:purchase\s+order|po\s*(?:no\.?|number)?|p\.o\.?)\s*[:#]?\s*([A-Z0-9][A-Z0-9\-_]{3,})/i);
     if (poNum && !meta.poNumber) { meta.poNumber = poNum[1]; return true; }
     const supplier = line.match(/^supplier\s*[:\-]\s*(.+)$/i);
     if (supplier) { meta.supplier = supplier[1].trim(); return true; }
-    const inc = line.match(/incoterm\s*[:\-]\s*([A-Z]{2,3})\b/i);
-    if (inc) { meta.incoterm = inc[1].toUpperCase(); }
+    // Incoterms — explicit "incoterm: FOB" first, then inline "FOB Shenzhen" / "delivered FOB"
+    if (!meta.incoterm) {
+      const incExplicit = line.match(/incoterm\s*[:\-]\s*([A-Z]{2,3})\b/i);
+      if (incExplicit) {
+        meta.incoterm = incExplicit[1].toUpperCase();
+      } else {
+        const incInline = line.match(INCOTERMS_REGEX);
+        if (incInline) {
+          meta.incoterm = incInline[1].toUpperCase();
+          incotermInferred = true;
+        }
+      }
+    }
     const cur = line.match(/currenc(?:y|ies)\s*[:\-]\s*([A-Z]{3})\b/i);
     if (cur) { meta.currency = cur[1].toUpperCase(); }
+    // Origin — explicit "origin: CN" first
     const orig = line.match(/origin(?:\s*country)?\s*[:\-]\s*([A-Z]{2})\b/i);
     if (orig) { meta.originCountry = orig[1].toUpperCase(); }
     const dest = line.match(/dest(?:ination)?(?:\s*country)?\s*[:\-]\s*([A-Z]{2})\b/i);
     if (dest) { meta.destinationCountry = dest[1].toUpperCase(); }
+    // Origin — inline inference from supplier-city / port mention
+    if (!meta.originCountry) {
+      const lower = line.toLowerCase();
+      for (const [city, iso] of Object.entries(CITY_TO_ISO)) {
+        if (lower.includes(city)) { meta.originCountry = iso; originInferred = true; break; }
+      }
+    }
+    // Origin — inline inference from supplier name pattern (e.g. "...Co., Ltd. China")
+    if (!meta.originCountry) {
+      const supCountryMatch = line.match(SUPPLIER_COUNTRY_REGEX);
+      if (supCountryMatch) {
+        const c = supCountryMatch[0].toLowerCase();
+        const map: Record<string, string> = {
+          'china': 'CN', 'prc': 'CN', 'peoples republic of china': 'CN', 'people\'s republic of china': 'CN',
+          'india': 'IN', 'pakistan': 'PK', 'bangladesh': 'BD', 'vietnam': 'VN', 'thailand': 'TH',
+          'indonesia': 'ID', 'malaysia': 'MY', 'turkey': 'TR', 'germany': 'DE', 'netherlands': 'NL',
+          'united kingdom': 'GB', 'france': 'FR', 'italy': 'IT', 'spain': 'ES', 'australia': 'AU',
+          'united states': 'US', 'mexico': 'MX', 'brazil': 'BR', 'uae': 'AE', 'saudi': 'SA',
+        };
+        for (const [k, v] of Object.entries(map)) {
+          if (c.includes(k)) { meta.originCountry = v; originInferred = true; break; }
+        }
+      }
+    }
     // freight / insurance / other — allow several on one line
     let consumedFreight = false;
     const fr = line.match(/freight\s*[:\-]\s*\$?([\d.,]+)/i);
@@ -432,10 +528,18 @@ export function parsePoPayload(
   return {
     poNumber,
     supplier: meta?.supplier ?? extractedMeta.supplier ?? undefined,
-    originCountry: meta?.originCountry ?? extractedMeta.originCountry ?? 'CN',
-    destinationCountry: meta?.destinationCountry ?? extractedMeta.destinationCountry ?? 'US',
+    // Origin + Incoterms fallbacks are NOW `undefined` (not 'CN'/'US'/'FOB')
+    // when the parser couldn't infer them from the PO text — the upload UI
+    // shows "—" instead of a fake default, and the user must set them via
+    // the meta field on the upload-po route OR via the destination dropdown
+    // before running the agent. The user can still override via the explicit
+    // meta field on the upload-po route.
+    originCountry: meta?.originCountry ?? extractedMeta.originCountry ?? undefined,
+    destinationCountry: meta?.destinationCountry ?? extractedMeta.destinationCountry ?? undefined,
     currency: meta?.currency ?? extractedMeta.currency ?? 'USD',
-    incoterm: meta?.incoterm ?? extractedMeta.incoterm ?? 'FOB',
+    incoterm: meta?.incoterm ?? extractedMeta.incoterm ?? undefined,
+    // expose the inference provenance so the UI can show "inferred from supplier city 'Shenzhen'"
+    _inference: { incotermInferred, originInferred } as unknown as never,
     freight: meta?.freight ?? (extractedMeta.freight as number) ?? 0,
     insurance: meta?.insurance ?? (extractedMeta.insurance as number) ?? 0,
     otherCharges: meta?.otherCharges ?? (extractedMeta.otherCharges as number) ?? 0,

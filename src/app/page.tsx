@@ -40,12 +40,12 @@ const fmtMoney = (n: number, c: string) => `${sym(c)}${n.toLocaleString(undefine
 const fmtPct = (n: number) => `${(n * 100).toFixed(n < 0.1 && n > 0 ? 3 : 2)}%`;
 
 interface SampleSummary { id: string; title: string; blurb: string; lineCount: number }
-const NAV = [
-  { label: 'H₂ Protocol Tool' },
-  { label: 'LCIE Cost Calculator', active: true },
-  { label: 'ICE Fleet Savings' },
-  { label: 'About' },
-  { label: 'ROI' },
+// Top-nav anchors — all link to actual sections on this single-page app. No
+// placeholder items for unbuilt engines.
+const NAV: { label: string; href: string }[] = [
+  { label: 'Calculator', href: '#calculator' },
+  { label: 'Audit Trail', href: '#audit-trail' },
+  { label: 'Regulations', href: '#regulations' },
 ];
 
 export default function Home() {
@@ -300,7 +300,7 @@ export default function Home() {
           </div>
           <nav className="hidden lg:flex items-center gap-1">
             {NAV.map((n) => (
-              <span key={n.label} className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${n.active ? 'bg-emerald-600 text-white' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}>{n.label}</span>
+              <a key={n.label} href={n.href} className="px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors text-muted-foreground hover:text-foreground hover:bg-muted">{n.label}</a>
             ))}
           </nav>
           <div className="flex items-center gap-2">
@@ -319,7 +319,7 @@ export default function Home() {
               LCIE Landed Cost Engine
               <span className="block text-emerald-600 dark:text-emerald-400">destination-aware duty stack with live FX</span>
             </h2>
-            <p className="mt-3 text-muted-foreground text-base md:text-lg max-w-2xl">
+            <p className="mt-3 text-muted-foreground text-base md:text-lg max-w-2xl text-justify hyphens-auto">
               Upload a PO and the LCIE agent determines the <strong className="text-foreground">HS tariff code</strong> &amp; full regulation stack for <strong className="text-foreground">only the final destined country</strong> — US (HTS · <strong className="text-foreground">9903.88.x China 10% reciprocal</strong> held per Nov 10 2025 deal · <strong className="text-foreground">9903.01.24 Fentanyl IEEPA 10%</strong> (reduced Nov 10 2025) · <strong className="text-foreground">9903.01.25 any-country 10% baseline</strong> · <strong className="text-foreground">MPF</strong> + <strong className="text-foreground">HMF</strong> ocean-only), UK (Global Tariff + 20% VAT), EU (TARIC + member-state VAT), <strong className="text-foreground">Australia</strong> (ABF · GST 10% + flat IPC A$50). Live <strong className="text-foreground">FTA preferential</strong> rate surfaced against MFN (USMCA · AUSFTA · UK-EU TCA · EU-Korea · RCEP · CPTPP · ChAFTA · JAEPA · …). Detailed <strong className="text-foreground">rulings &amp; updated import laws</strong> per region (incl. EO 14358 Nov 4 2025 + Nov 10 2025 US-China deal + CSMS 66749380). Live <strong className="text-foreground">ECB FX</strong> settles in destination currency. Every calc is <strong className="text-foreground">saved to your audit trail</strong> — the history below updates every time you run it.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
@@ -375,7 +375,7 @@ export default function Home() {
         </section>
 
         {/* ===== Workspace ===== */}
-        <section ref={workspaceRef} className="container mx-auto px-4 pb-12 space-y-6">
+        <section ref={workspaceRef} id="calculator" className="container mx-auto px-4 pb-12 space-y-6 scroll-mt-20">
           {/* Upload card */}
           {!po && (
             <>
@@ -531,14 +531,18 @@ export default function Home() {
           )}
 
           {/* Detailed rulings & updated import laws for the destination region (shown when a calc exists; otherwise show all 4 regions as a reference) */}
-          {calcResult ? (
-            <RegulationsPanel region={calcResult.destination.region} />
-          ) : (
-            <RegulationsIndexOnboarding />
-          )}
+          <div id="regulations" className="scroll-mt-20">
+            {calcResult ? (
+              <RegulationsPanel region={calcResult.destination.region} />
+            ) : (
+              <RegulationsIndexOnboarding />
+            )}
+          </div>
 
           {/* Saved calculations audit trail — always visible so the customer sees "it updates every time a customer buys it" */}
-          <SavedCalcsHistory items={savedCalcs} loading={savedCalcsLoading} onRefresh={refreshSavedCalcs} />
+          <div id="audit-trail" className="scroll-mt-20">
+            <SavedCalcsHistory items={savedCalcs} loading={savedCalcsLoading} onRefresh={refreshSavedCalcs} />
+          </div>
 
           {error && po && (<div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm"><AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" /><p className="text-destructive">{error}</p></div>)}
         </section>
@@ -553,11 +557,9 @@ export default function Home() {
               <p className="text-xs text-muted-foreground max-w-md leading-relaxed">Hydrogen hardware, pharmacology-grade wellness intelligence, and forensic landed-cost engineering — merged into one executive control deck.</p>
               <Button variant="outline" size="sm" className="mt-3 gap-1.5 border-emerald-300/60 text-emerald-700 dark:text-emerald-300 dark:border-emerald-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"><Truck className="h-3.5 w-3.5" /> Schedule an Enterprise Green Audit</Button>
             </div>
-            <div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Live Engines</p>
+            <div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Live Engine</p>
               <ul className="space-y-1.5 text-xs">
-                <li className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> LCIE Landed Cost Engine</li>
-                <li className="flex items-center gap-1.5 text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" /> H₂ Protocol &amp; Usage Tool</li>
-                <li className="flex items-center gap-1.5 text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" /> ICE Fleet Savings Engine</li>
+                <li className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> LCIE Landed Cost Engine <span className="text-[10px] text-muted-foreground">(this site)</span></li>
               </ul>
             </div>
             <div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Divisions</p>

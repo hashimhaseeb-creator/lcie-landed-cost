@@ -207,9 +207,10 @@ export function getRate(key: string): RateEntry | null {
 
 /** Search queries used to verify each provision's current rate. */
 const VERIFY_QUERIES: { key: string; query: string; rateRegex: RegExp; dateRegex: RegExp }[] = [
+  // ── US Chapter-99 provisions ──
   {
     key: 'us-9903.88.x',
-    query: 'US 9903.88 China reciprocal tariff current rate 2026 effective',
+    query: 'US 9903.88 China reciprocal tariff current rate 2026 effective EO 14358',
     rateRegex: /\b(\d{1,3}(?:\.\d+)?)\s*(?:percent|%)\s*(?:reciprocal)?\s*(?:tariff)?\s*(?:on|rate|for)?\s*(?:china|chinese)?/i,
     dateRegex: /\b(?:effective|dated|published|signed)\s+(\w+ \d{1,2},? \d{4})\b/i,
   },
@@ -219,17 +220,96 @@ const VERIFY_QUERIES: { key: string; query: string; rateRegex: RegExp; dateRegex
     rateRegex: /\b(\d{1,3}(?:\.\d+)?)\s*(?:percent|%)\b/i,
     dateRegex: /\b(?:effective|dated|published)\s+(\w+ \d{1,2},? \d{4})\b/i,
   },
+  // ── US Chapter-99 baseline reciprocal (9903.01.25) ──
+  {
+    key: 'us-9903.01.25',
+    query: 'US 9903.01.25 any country reciprocal tariff rate baseline 10 percent 2026',
+    rateRegex: /\b(\d{1,3}(?:\.\d+)?)\s*(?:percent|%)\s*(?:baseline)?\s*(?:reciprocal)?\b/i,
+    dateRegex: /\b(?:effective|dated|published|since)\s+(\w+ \d{1,2},? \d{4})\b/i,
+  },
+  // ── New/modified Chapter-99 subheadings (9903.88.62, 9903.88.63 product exclusions) ──
+  // Caught via generic query — surfaces any new subheadings + their effective date.
+  {
+    key: 'us-9903.88.x',
+    query: 'CBP 9903.88.62 9903.88.63 product exclusion extension China 2026',
+    rateRegex: /\b(\d{1,3}(?:\.\d+)?)\s*(?:percent|%)\b/i,
+    dateRegex: /\b(?:effective|dated|published|extension)\s+(\w+ \d{1,2},? \d{4})\b/i,
+  },
+  // ── Section 301 List 3/4A residual status ──
+  {
+    key: 'us-section-301',
+    query: 'Section 301 List 3 4A China tariff status current 2026 USTR',
+    rateRegex: /\b(\d{1,3}(?:\.\d+)?)\s*(?:percent|%)\b/i,
+    dateRegex: /\b(?:effective|since|from|amended)\s+(\w+ \d{1,2},? \d{4})\b/i,
+  },
+  // ── UK VAT standard rate (HMRC) ──
   {
     key: 'uk-vat',
-    query: 'UK VAT standard rate current 2026 HMRC',
+    query: 'UK VAT standard rate current 2026 HMRC 20 percent',
     rateRegex: /\bstandard\s+rate\s+(?:of\s+)?(?:VAT\s+)?(?:is\s+)?(\d{1,3}(?:\.\d+)?)\s*(?:percent|%)/i,
     dateRegex: /\b(?:effective|since|from)\s+(\w+ \d{1,2},? \d{4})\b/i,
   },
+  // ── UK Global Tariff annual update ──
+  {
+    key: 'uk-global-tariff-2026',
+    query: 'UK Global Tariff 2026 update January HMRC commodity code duty rate',
+    rateRegex: /\b(\d{1,3}(?:\.\d+)?)\s*(?:percent|%)\b/i,
+    dateRegex: /\b(?:effective|dated|published|since|from)\s+(\w+ \d{1,2},? \d{4})\b/i,
+  },
+  // ── EU VAT (DE default + key member states) ──
+  {
+    key: 'eu-vat-de',
+    query: 'Germany VAT rate standard 19 percent current 2026 EU member state',
+    rateRegex: /\b(?:standard\s+rate\s+(?:of\s+)?(?:VAT\s+)?(?:is\s+)?)?(\d{1,3}(?:\.\d+)?)\s*(?:percent|%)\b/i,
+    dateRegex: /\b(?:effective|since|from)\s+(\w+ \d{1,2},? \d{4})\b/i,
+  },
+  // ── EU CBAM Definitive Regulation status (in force Jan 2026 — verification) ──
+  {
+    key: 'eu-cbam-2026',
+    query: 'EU CBAM definitive regulation 2026 status CBAM certificates quarterly reporting',
+    rateRegex: /\b(\d{1,3}(?:\.\d+)?)\s*(?:percent|%)\b/i,
+    dateRegex: /\b(?:effective|in force|definitive)\s+(\w+ \d{1,2},? \d{4})\b/i,
+  },
+  // ── AU GST (10% — unchanged since 2000) ──
   {
     key: 'au-gst',
-    query: 'Australia GST rate current 2026 ABF 10 percent',
+    query: 'Australia GST rate current 2026 ABF 10 percent ATO',
     rateRegex: /\bGST\s+(?:rate\s+)?(?:is\s+)?(\d{1,3}(?:\.\d+)?)\s*(?:percent|%)/i,
     dateRegex: /\b(?:effective|since|from)\s+(\w+ \d{1,2},? \d{4})\b/i,
+  },
+  // ── AU Import Processing Charge annual adjustment ──
+  {
+    key: 'au-ipc-flat',
+    query: 'Australia ABF Import Processing Charge 2026 AUD 50 formal entry fee',
+    rateRegex: /(?:AUD|A\$)\s*(\d{2,4}(?:\.\d{1,2})?)/i,
+    dateRegex: /\b(?:effective|since|from|annual)\s+(\w+ \d{1,2},? \d{4})\b/i,
+  },
+  // ── New FTA signings (US-UK FTA, EU-India, EU-Mercosur ratification status) ──
+  {
+    key: 'us-uk-fta',
+    query: 'US UK FTA agreement status 2026 in force signed ratification',
+    rateRegex: /\b(?:in\s+force|ratified|signed)\b/i,
+    dateRegex: /\b(?:signed|in\s+force|ratified)\s+(\w+ \d{1,2},? \d{4})\b/i,
+  },
+  {
+    key: 'eu-mercosur',
+    query: 'EU Mercosur FTA agreement ratification status 2026 in force',
+    rateRegex: /\b(?:in\s+force|ratified|signed)\b/i,
+    dateRegex: /\b(?:signed|in\s+force|ratified)\s+(\w+ \d{1,2},? \d{4})\b/i,
+  },
+  // ── US MPF (Merchandise Processing Fee) annual rate ──
+  {
+    key: 'us-mpf',
+    query: 'CBP Merchandise Processing Fee MPF 2026 rate 0.3464 percent floor cap',
+    rateRegex: /\b(\d{1,3}(?:\.\d+)?)\s*(?:percent|%)\b/i,
+    dateRegex: /\b(?:effective|since|annual|fiscal\s+year)\s+(\w+ \d{1,2},? \d{4})\b/i,
+  },
+  // ── US HMF (Harbor Maintenance Fee) — unchanged 0.125% since 1986 ──
+  {
+    key: 'us-hmf',
+    query: 'US Harbor Maintenance Fee HMF rate 0.125 percent 2026 CBP',
+    rateRegex: /\b(\d{1,3}(?:\.\d+)?)\s*(?:percent|%)\b/i,
+    dateRegex: /\b(?:effective|since|from|annual)\s+(\w+ \d{1,2},? \d{4})\b/i,
   },
 ];
 
