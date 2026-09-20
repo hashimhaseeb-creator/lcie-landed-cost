@@ -66,11 +66,12 @@ Rules:
 - dutyRate is a DECIMAL ad valorem fraction (0.165 = 16.5%, 0 = free). dutyType ∈ {"ad valorem","specific","free"}.
 - vatRate is a DECIMAL (0.20 = 20%). For US, vatRate MUST be 0 (no federal VAT). For AU, vatRate is the GST rate (0.10 = 10%) on (customs value + duty). For UK/EU it is the member-state VAT.
 - additionalLevies: object mapping levy name → decimal rate. For US always include {"MPF":0.003464,"ChinaReciprocal":<rate>,"CNHKEO":<rate>,"AnyCountry":<rate>}. For UK/EU use null or {}.
-- 9903.88.01/.03 China 25% reciprocal (US, ChinaReciprocal): the 2025 EO China-specific reciprocal tariff. If originCountry is CN set "ChinaReciprocal":0.25; 0 otherwise. (This is the modern Chapter-99 successor to the legacy Section 301 List 3 rate.)
-- 9903.01.24 CN/HK EO additional 20% (US, CNHKEO): an additional 20% on China/Hong Kong origin. If origin is CN set "CNHKEO":0.20; 0 otherwise.
-- 9903.01.25 any-country reciprocal 10% (US, AnyCountry): a 10% reciprocal duty applying to ANY country of origin (not just China). Always set "AnyCountry":0.10.
+- 9903.88.x China 10% reciprocal (US, ChinaReciprocal): the 2025 EO 14257 China-specific reciprocal tariff, HELD AT 10% under the Nov 10 2025 US-China trade deal (Trump-Xi Oct 30 2025 meeting) — in effect through Nov 10 2026 (per EO 14358 Nov 4 2025 + Federal Register Nov 7 2025). If originCountry is CN set "ChinaReciprocal":0.10; 0 otherwise. (This is the modern Chapter-99 successor to the legacy Section 301 List 3 rate — DO NOT use the old 25% rate, that was superseded Nov 2025.)
+- 9903.01.24 Fentanyl IEEPA 10% (US, CNHKEO): the fentanyl-related IEEPA tariff on China-origin goods, REDUCED FROM 20% TO 10% effective Nov 10 2025 (per CSMS # 66749380, Nov 7 2025 + EO 14358 Nov 4 2025). If origin is CN set "CNHKEO":0.10; 0 otherwise.
+- 9903.01.25 any-country reciprocal 10% (US, AnyCountry): the 10% baseline reciprocal duty applying to ANY country of origin (EO 14257 Apr 2 2025). Always set "AnyCountry":0.10. (The 24% ADDITIONAL portion for non-agreement countries is SUSPENDED through Nov 10 2026 — only the 10% baseline remains in effect.)
 - HMF (US, Harbor Maintenance Fee, 0.125%): ocean-mode only. Include "HMF":0.00125 if the shipment is ocean-borne; omit/0 for rail/air/truck. The calc engine decides based on modeOfTransport.
-- The three Chapter-99 provisions are applied ADDITIVELY to the entered value (FOB) — they stack, not offset. China origin → 25%+20%+10% = 55%; non-China → 10%.
+- The three Chapter-99 provisions are applied ADDITIVELY to the entered value (FOB) — they stack, not offset. China origin → 10%+10%+10% = 30% (as of Sep 2026, post-Nov 10 2025 deal); non-China → 10%.
+- NOTE: legacy Section 301 List 3/4A duties (25% on many China-origin goods from the first Trump term) remain in effect for SPECIFIC HTS subheadings — these are item-specific surcharges not modelled here. The Wharton Sep 9 2026 update reports China's effective tariff rate at 22.8% (average across all goods including residual Section 301).
 - confidence: 0..1 self-reported certainty (use ≥0.85 when grounded by KB, 0.6-0.84 for LLM-only inference).
 - reasoning: ONE concise sentence explaining the classification rationale (material + chapter + duty treatment + the Chapter-99 stack).
 - If a product is genuinely duty-free under the WTO Information Technology Agreement (smartphones, laptops, semiconductors), set dutyRate 0 and dutyType "free" with a note in reasoning.
@@ -80,7 +81,7 @@ Return ONLY valid JSON (no markdown fences, no prose) in this exact shape:
   "items": [
     {
       "lineItemId": "<id from input>",
-      "us": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0, "additionalLevies": {"MPF":0.003464,"ChinaReciprocal":0.25,"CNHKEO":0.20,"AnyCountry":0.10}, "confidence": 0.9, "reasoning": "..." },
+      "us": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0, "additionalLevies": {"MPF":0.003464,"ChinaReciprocal":0.10,"CNHKEO":0.10,"AnyCountry":0.10}, "confidence": 0.9, "reasoning": "..." },
       "uk": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0.2, "additionalLevies": null, "confidence": 0.9, "reasoning": "..." },
       "eu": { "hsCode": "...", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "ad valorem", "vatRate": 0.19, "additionalLevies": null, "confidence": 0.9, "reasoning": "..." },
       "au": { "hsCode": "8421.21.00.90", "tariffDescription": "...", "dutyRate": 0.0, "dutyType": "free", "vatRate": 0.10, "additionalLevies": null, "confidence": 0.9, "reasoning": "..." }
@@ -459,9 +460,9 @@ async function storeItemDeterminations(
           additionalLevies: region === 'US'
             ? (() => {
                 const cn = ((li.originCountry ?? po.originCountry ?? 'CN') + '').toUpperCase() === 'CN';
-                const chinaReciprocal = cn ? 0.25 : 0;   // 9903.88.01
-                const cnhkEo = cn ? 0.20 : 0;             // 9903.01.24
-                const anyCountry = 0.10;                   // 9903.01.25 (any country)
+                const chinaReciprocal = cn ? 0.10 : 0;   // 9903.88.x — held at 10% per Nov 10 2025 US-China deal (EO 14358 Nov 4 2025 + CSMS 66749380 Nov 7 2025)
+                const cnhkEo = cn ? 0.10 : 0;            // 9903.01.24 Fentanyl IEEPA — reduced 20% → 10% effective Nov 10 2025
+                const anyCountry = 0.10;                  // 9903.01.25 baseline reciprocal 10% (any country)
                 return JSON.stringify({
                   MPF: DUTY_RULES.US.mpfRate,
                   HMF: DUTY_RULES.US.hmfRate, // calc engine applies only for ocean mode

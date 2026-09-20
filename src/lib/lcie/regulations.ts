@@ -137,23 +137,53 @@ export const REGULATIONS_BY_REGION: Record<'US' | 'UK' | 'EU' | 'AU', RegionRegu
       },
       {
         id: 'us-hts-9903-88-01',
-        title: 'HTS 9903.88.01 / .03 — China reciprocal additional duty (25%)',
-        citation: 'HTSUS 2025 subheading 9903.88.01 / 9903.88.03',
-        effectiveDate: '2025-04-05',
+        title: 'HTS 9903.88.x — China reciprocal additional duty (currently 10%)',
+        citation: 'HTSUS 2025 subheading 9903.88.01 / .03 (as modified by EO 14358)',
+        effectiveDate: '2025-11-10',
         summary:
-          'Chapter 99 additional 25% ad-valorem duty on goods of CN origin, applied in addition to the base HTS rate; invoked under the IEEPA reciprocal-tariff framework.',
+          'Chapter 99 China reciprocal additional duty, HELD AT 10% per the Nov 10 2025 US-China trade deal (Trump-Xi Oct 30 2025 meeting). Was briefly 34% Apr-Nov 2025 after EO 14257. The 24% additional portion is SUSPENDED through Nov 10 2026. Supersedes the legacy Section 301 List 3 25% rate.',
         category: 'tariff',
         url: 'https://hts.usitc.gov/search?query=9903.88.01',
       },
       {
         id: 'us-hts-9903-01-24',
-        title: 'HTS 9903.01.24 — CN/HK EO additional duty (20%)',
-        citation: 'HTSUS 2025 subheading 9903.01.24',
-        effectiveDate: '2025-04-05',
+        title: 'HTS 9903.01.24 — Fentanyl IEEPA duty (currently 10%, reduced from 20%)',
+        citation: 'HTSUS 2025 subheading 9903.01.24 + CSMS # 66749380',
+        effectiveDate: '2025-11-10',
         summary:
-          'Additional 20% ad-valorem duty on goods originating in or exported from the People\'s Republic of China or the Hong Kong SAR; stacked with the 9903.88.01/.03 China reciprocal and the 9903.01.25 any-country provisions.',
+          'Fentanyl-related IEEPA ad-valorem duty on China-origin goods, REDUCED FROM 20% TO 10% effective Nov 10 2025 per CSMS # 66749380 (Nov 7 2025) and EO 14358 (Nov 4 2025). Stacked additively with the 9903.88.x China reciprocal and the 9903.01.25 any-country baseline.',
         category: 'tariff',
-        url: 'https://hts.usitc.gov/search?query=9903.01.24',
+        url: 'https://content.govdelivery.com/accounts/USDHSCBP/bulletins/3fa83c4',
+      },
+      {
+        id: 'us-eo-14358',
+        title: 'EO 14358 — "Modifying Reciprocal Tariff Rates Consistent with the US-China Trade Agreement"',
+        citation: 'EO 14358 (Nov 4 2025), 90 Fed. Reg. 50729',
+        effectiveDate: '2025-11-10',
+        summary:
+          'Implemented the Nov 10 2025 US-China trade deal: held the China reciprocal at 10% (down from the 34% imposed Apr 2025), reduced the fentanyl IEEPA from 20% to 10%, suspended the additional 24% reciprocal portion through Nov 10 2026. Published in the Federal Register Nov 7 2025.',
+        category: 'tariff',
+        url: 'https://www.federalregister.gov/documents/2025/11/07/2025-24479/modifying-reciprocal-tariff-rates-consistent-with-the-economic-and-trade-agreement',
+      },
+      {
+        id: 'us-csms-66749380',
+        title: 'CSMS # 66749380 — UPDATE: Tariff Rates for Products of China',
+        citation: 'CBP CSMS 66749380 (Nov 7 2025)',
+        effectiveDate: '2025-11-10',
+        summary:
+          'CBP guidance implementing EO 14358: confirms the fentanyl IEEPA ad-valorem rate is lowered from 20% to 10% for goods entered for consumption on or after Nov 10 2025; instructs filers on the correct Chapter 99 reporting.',
+        category: 'ruling',
+        url: 'https://content.govdelivery.com/accounts/USDHSCBP/bulletins/3fa83c4',
+      },
+      {
+        id: 'us-nov10-2025-deal',
+        title: 'Nov 10 2025 US-China Trade Agreement (Trump-Xi Oct 30 2025)',
+        citation: 'US-China Joint Statement (Nov 10 2025)',
+        effectiveDate: '2025-11-10',
+        summary:
+          'One-year trade truce following Trump-Xi Oct 30 2025 meeting: US holds China reciprocal at 10%, reduces fentanyl IEEPA to 10%, suspends the additional 24% reciprocal through Nov 10 2026. China removed the 15% retaliatory tariff on US chicken/wheat/corn/cotton and the 10% on other goods, plus resumes rare-earth exports. Wharton Budget Model reports China effective tariff at 22.8% as of Sep 9 2026.',
+        category: 'agreement',
+        url: 'https://www.wiley.law/news/us-china-negotiate-one-year-trade-deal',
       },
       {
         id: 'us-hts-9903-01-25',

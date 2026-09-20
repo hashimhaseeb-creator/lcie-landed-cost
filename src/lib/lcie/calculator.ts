@@ -296,9 +296,9 @@ export async function calculateLandedCost(
       note: `${ftaAdvisory.agreementName} · preferential ${(ftaAdvisory.preferentialRate * 100).toFixed(1)}% vs MFN ${(weightedMfn * 100).toFixed(1)}% · saves ${sym(dest.currency)}${saving.toLocaleString()} (claim requires proof of origin)`,
     });
   }
-  if (chinaReciprocalTotal > 0) push('+ 9903.88.01 China 25% reciprocal', chinaReciprocalTotal, avgRate(lineBreakdown, 'chinaReciprocalRate'), '2025 EO China reciprocal (replaces legacy Section 301)');
-  if (cnhkEoTotal > 0) push('+ 9903.01.24 CN/HK EO additional 20%', cnhkEoTotal, avgRate(lineBreakdown, 'cnhkEoRate'), 'China/Hong Kong additional duty');
-  if (anyCountryTotal > 0) push('+ 9903.01.25 any-country reciprocal 10%', anyCountryTotal, avgRate(lineBreakdown, 'anyCountryRate'), 'Applies to any country of origin');
+  if (chinaReciprocalTotal > 0) push('+ 9903.88.x China 10% reciprocal (held per Nov 10 2025 deal)', chinaReciprocalTotal, avgRate(lineBreakdown, 'chinaReciprocalRate'), 'EO 14358 Nov 4 2025 + Nov 10 2025 US-China agreement held China reciprocal at 10% through Nov 10 2026 (was briefly 34% Apr-Nov 2025; supersedes legacy Section 301 25%)');
+  if (cnhkEoTotal > 0) push('+ 9903.01.24 Fentanyl IEEPA 10% (reduced Nov 10 2025)', cnhkEoTotal, avgRate(lineBreakdown, 'cnhkEoRate'), 'CSMS 66749380 Nov 7 2025 + EO 14358 Nov 4 2025 — fentanyl IEEPA reduced 20% → 10% effective Nov 10 2025');
+  if (anyCountryTotal > 0) push('+ 9903.01.25 any-country reciprocal 10% baseline', anyCountryTotal, avgRate(lineBreakdown, 'anyCountryRate'), 'EO 14257 Apr 2 2025 baseline reciprocal — 24% additional portion SUSPENDED through Nov 10 2026; only the 10% baseline remains in effect');
   if (vatTotal > 0) push(region === 'AU' ? '+ GST (Goods & Services Tax)' : '+ VAT', vatTotal, dest.vatRate, region !== 'US' ? `On (CIF + duty) — ${dest.countryName} ${region === 'AU' ? 'GST' : 'standard rate'}` : undefined);
   if (mpfTotal > 0) push('+ MPF (Merchandise Processing Fee)', mpfTotal, rule.mpfRate, 'US 0.3464%, floored/capped');
   if (hmfTotal > 0) push('+ HMF (Harbor Maintenance Fee)', hmfTotal, rule.hmfRate, 'US ocean 0.125% (not assessed for rail/air)');
