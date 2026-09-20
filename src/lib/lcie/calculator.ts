@@ -102,9 +102,25 @@ export async function calculateLandedCost(
             anyCountryRate = Math.max(0, num(obj.IEEPA) - 0.20) || 0.10;
           }
         }
+        // Aggregator: only rates between 0 and 1 (i.e. genuine ad-valorem levy
+        // rates) qualify as "other levies" to be multiplied by the cif base.
+        // Anything else (e.g. `gstRate: 0.10`, `vatRate: 0.20`, `ipcFlat: 50`)
+        // is meta/structural config stored alongside the determination, NOT a
+        // duty to be assessed here — the calculator already applies GST/VAT
+        // and the flat Import Processing Charge from the DutyRule separately.
+        // Excluded keys (US Chapter-99 / MPF / HMF) are also skipped because
+        // they are handled as their own waterfall steps.
+        const EXCLUDED = new Set([
+          'MPF', 'HMF', 'Section301', 'IEEPA',
+          'ChinaReciprocal', 'CNHKEO', 'CNHK_EO', 'AnyCountry', 'AnyCountryReciprocal',
+          // meta fields stored by the agent — NOT levies to be assessed here:
+          'vatRate', 'gstRate', 'ipcFlat', 'ipcFlatLow',
+        ]);
         for (const [k, v] of Object.entries(obj)) {
-          if (['MPF','HMF','Section301','IEEPA','ChinaReciprocal','CNHKEO','CNHK_EO','AnyCountry','AnyCountryReciprocal'].includes(k)) continue;
-          if (typeof v === 'number') lineOtherLevies += cifValue * v;
+          if (EXCLUDED.has(k)) continue;
+          if (typeof v === 'number' && v > 0 && v < 1) {
+            lineOtherLevies += cifValue * v;
+          }
         }
       } catch { /* ignore */ }
     }
