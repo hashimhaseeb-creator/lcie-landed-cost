@@ -102,10 +102,15 @@ export default function Home() {
       const d = await r.json();
       setRateSnapshot(d);
       const changeCount = d.changeCount ?? 0;
-      if (changeCount > 0) {
-        toast.success(`Rates re-verified — ${changeCount} change(s) detected vs. previous snapshot`);
+      if (d.source === 'web-search-verified') {
+        if (changeCount > 0) {
+          toast.success(`✓ Rates re-verified via web-search — ${changeCount} change(s) detected vs. previous snapshot`);
+        } else {
+          toast.success('✓ Rates re-verified via web-search — all provisions match the current snapshot');
+        }
       } else {
-        toast.success('Rates re-verified — all provisions match the current snapshot');
+        // source === 'baseline' → ZAI web_search couldn't run (no API key) → still showing baseline
+        toast.warning('⚠ Rate refresh could not run web-search — set ZAI_API_KEY on Vercel to enable live verification. Showing baseline rates (current as of Sep 2026).');
       }
     } catch (e) {
       toast.error('Rate refresh failed — check your ZAI_API_KEY env var');
