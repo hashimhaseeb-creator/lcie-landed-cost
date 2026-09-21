@@ -19,3 +19,5 @@ export async function GET() {
     rates: snapshot.rates,
   });
 }
+
+// trigger rebuild — env vars were flipped from Sensitive to Encrypted on Vercel
