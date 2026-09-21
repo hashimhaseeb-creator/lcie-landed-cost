@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/lcie/cron-refresh-rates",
+      "schedule": "0 6 * * *"
+    }
+  ]
+}
