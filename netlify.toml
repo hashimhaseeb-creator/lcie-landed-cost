@@ -1,0 +1,25 @@
+# Netlify config for the LCIE Landed Cost Engine (Green G(P)⁴™ Global Operations)
+# ---------------------------------------------------------------------------
+# NOTE: Netlify's FREE tier times serverless functions out at ~10s. The LCIE
+# agent's LLM classification path (small POs, ≤6 items) can take ~30s and WILL
+# time out on Netlify free. The KB-only path (large POs) is instant and works.
+# For the full engine with LLM, prefer Vercel (60s free function timeout) —
+# see DEPLOY.md. Netlify is fine for the static marketing brochure.
+
+[build]
+  command = "next build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[build.environment]
+  NEXT_APP_ENV = "production"
+  # Set these in the Netlify UI (Site settings → Environment variables):
+  #   DATABASE_URL          = postgres connection string (Neon / Supabase free Postgres)
+  #   ZAI_API_KEY           = your z-ai-web-dev-sdk key (if required by your plan)
+  # The FX API (frankfurter.dev) and the CBP parser (unpdf) need no key.
+
+[functions]
+  # Netlify Pro extends this; free is capped at ~10–26s.
+  max_duration = 26
