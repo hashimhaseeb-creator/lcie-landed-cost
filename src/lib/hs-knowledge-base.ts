@@ -80,22 +80,30 @@ export interface DutyRule {
   flag: string;
   /** Currency code. */
   currency: string;
-  /** US Merchandise Processing Fee rate (0.3464%). */
+  /** US Merchandise Processing Fee rate (0.3464% ad valorem, fixed by statute 19 U.S.C. §58c(a)(9)). */
   mpfRate?: number;
-  /** MPF minimum in USD. */
+  /** MPF minimum floor in USD — FY2026 inflation-adjusted to $34.58 (CBP fee schedule, effective Oct 1 2025). */
   mpfMin?: number;
-  /** MPF maximum in USD. */
+  /** MPF maximum ceiling cap in USD — FY2026 inflation-adjusted to $670.86 (CBP fee schedule, effective Oct 1 2025). */
   mpfMax?: number;
-  /** US Harbor Maintenance Fee rate (0.125%, ocean only). */
+  /** US Harbor Maintenance Fee rate (0.125%, ocean only, 19 U.S.C. §4462). */
   hmfRate?: number;
   /** Federal/national VAT rate (0 for US). For AU this is GST (10%). */
   vatRate?: number;
   /** Human-friendly VAT/GST label. */
   vatLabel?: string;
-  /** Australia Import Processing Charge — flat fee for consignments ≥ AUD 10,000. */
+  /** Australia Import Processing Charge — flat fee for consignments ≥ AUD 10,000 (ABF 2024-2025). */
   ipcFlat?: number;
   /** Australia IPC for consignments under AUD 10,000 but over AUD 1,000. */
   ipcFlatLow?: number;
+  /** EU e-commerce parcel: flat customs duty per unique HS6 line for parcels ≤ €150 (effective Jul 1 2021; €150 de minimis REMOVED). */
+  euParcelFlatDutyPerHs6?: number;
+  /** EU e-commerce parcel: flat handling fee per customs declaration line for parcels ≤ €150. */
+  euParcelHandlingFeePerLine?: number;
+  /** EU e-commerce parcel: intrinsic-value threshold below which the flat parcel regime applies (€150). */
+  euParcelThreshold?: number;
+  /** Carbon price per tCO2e under the region's ETS (UK ETS £83/t; EU ETS €100/t as of 2026). Used to compute carbon penalty avoidance savings. */
+  etsCarbonPricePerTonne?: number;
   /** Duty assessment base: US uses FOB, UK/EU/AU use CIF. */
   dutyCalcBase: 'FOB' | 'CIF';
   /** VAT assessment base: UK/EU/AU use CIF+duty; US has no federal VAT. */
@@ -1111,18 +1119,18 @@ export const DUTY_RULES: Record<'US' | 'UK' | 'EU' | 'AU', DutyRule> = {
     label: 'United States',
     flag: '🇺🇸',
     currency: 'USD',
-    mpfRate: 0.003464,
-    mpfMin: 31.67,
-    mpfMax: 614.35,
-    hmfRate: 0.00125,
+    mpfRate: 0.003464,                // 0.3464% ad valorem — fixed by statute 19 U.S.C. §58c(a)(9)
+    mpfMin: 34.58,                    // FY2026 inflation-adjusted floor (CBP fee schedule, effective Oct 1 2025)
+    mpfMax: 670.86,                   // FY2026 inflation-adjusted ceiling cap (CBP fee schedule, effective Oct 1 2025)
+    hmfRate: 0.00125,                 // 0.125% — ocean-only per 19 U.S.C. §4462
     vatRate: 0,
     vatLabel: 'Sales Tax (state-level, out of scope)',
     dutyCalcBase: 'FOB',
     vatCalcBase: 'n/a',
     notes:
       'US duty assessed on FOB value (Column 1 / MFN rate from HTS). ' +
-      'Merchandise Processing Fee (MPF) = 0.3464% of FOB, floored at $31.67 and capped at $614.35 (formal entries). ' +
-      'Harbor Maintenance Fee (HMF) = 0.125% of value applies only to ocean-borne shipments. ' +
+      'Merchandise Processing Fee (MPF) = 0.3464% of FOB, floored at $34.58 and capped at $670.86 (FY2026 inflation-adjusted, CBP fee schedule effective Oct 1 2025; ad valorem rate unchanged at 0.3464% per 19 U.S.C. §58c). ' +
+      'Harbor Maintenance Fee (HMF) = 0.125% of value applies only to ocean-borne shipments (19 U.S.C. §4462). ' +
       'No federal VAT; state/county sales tax is out of scope for the LCIE landed-cost calculation.',
   },
   UK: {
@@ -1131,12 +1139,14 @@ export const DUTY_RULES: Record<'US' | 'UK' | 'EU' | 'AU', DutyRule> = {
     currency: 'GBP',
     vatRate: 0.2,
     vatLabel: 'VAT (standard 20%)',
+    etsCarbonPricePerTonne: 83,       // UK ETS auction clearing price ~£83/tCO2e (2026)
     dutyCalcBase: 'CIF',
     vatCalcBase: 'CIF_plus_duty',
     notes:
       'UK Global Tariff applies Third Country (MFN) duty on CIF value (customs value = transaction value + freight + insurance + handling to UK border). ' +
       'Standard VAT 20% levied on (CIF + duty + any excise). Reduced rates apply to some goods (e.g. children\'s car seats 5%, domestic fuel 5%). ' +
-      'No MPF / HMF equivalents. Excise duties apply separately to alcohol, tobacco, hydrocarbon oils.',
+      'No MPF / HMF equivalents. Excise duties apply separately to alcohol, tobacco, hydrocarbon oils. ' +
+      'UK ETS carbon price £83/tCO2e (2026) — used to compute carbon penalty avoidance savings when shipments route via lower-emission sea/rail instead of air.',
   },
   EU: {
     label: 'European Union',
@@ -1144,13 +1154,21 @@ export const DUTY_RULES: Record<'US' | 'UK' | 'EU' | 'AU', DutyRule> = {
     currency: 'EUR',
     vatRate: 0.19,
     vatLabel: 'VAT (DE 19% default; varies by member state)',
+    euParcelFlatDutyPerHs6: 3,        // Flat €3 customs duty per unique HS6 line item for parcels ≤ €150 (Reg (EU) 2017/2455 + 2020/262)
+    euParcelHandlingFeePerLine: 2,    // Flat €2 handling fee per customs declaration line for parcels ≤ €150
+    euParcelThreshold: 150,           // €150 de minimis REMOVED Jul 1 2021 — all B2C parcels are now dutiable
+    etsCarbonPricePerTonne: 100,      // EU ETS auction clearing price ~€100/tCO2e (2026)
     dutyCalcBase: 'CIF',
     vatCalcBase: 'CIF_plus_duty',
     notes:
       'EU TARIC applies MFN duty on CIF customs value (transaction value + freight + insurance to EU border) using the 8-digit CN code. ' +
-      'VAT is levied by each member state on (CIF + duty + excise) at the national rate — Germany 19% (default), France 20%, Netherlands 21%, Italy 22%, Spain 21%. ' +
+      'VAT is levied by each member state on (CIF + duty + excise + parcel-handling fees) at the national rate — Germany 19% (default), France 20%, Netherlands 21%, Italy 22%, Spain 21%. ' +
       'Reduced rates apply to food, books, medicines, etc. in most states. ' +
-      'No MPF / HMF equivalents. Excise duties apply separately to alcohol, tobacco, energy products.',
+      'No MPF / HMF equivalents. Excise duties apply separately to alcohol, tobacco, energy products. ' +
+      'E-COMMERCE PARCEL REGIME (Reg (EU) 2017/2455, in force 1 Jul 2021): the historical €150 de minimis customs duty exemption has been PERMANENTLY REMOVED. ' +
+      'For all incoming B2C / parcel line items where the intrinsic value evaluates to €150 or less, apply a flat €3 customs duty fee per unique HS6 line item + a mandatory €2 handling fee per customs declaration line. ' +
+      'VAT must be calculated on top of (product value + this new duty baseline + handling fees). ' +
+      'EU ETS carbon price €100/tCO2e (2026) — used to compute carbon penalty avoidance savings when shipments route via lower-emission sea/rail instead of air.',
   },
   AU: {
     label: 'Australia',

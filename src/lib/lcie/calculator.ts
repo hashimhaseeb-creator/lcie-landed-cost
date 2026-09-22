@@ -224,18 +224,28 @@ export async function calculateLandedCost(
     });
   }
 
-  // MPF (US only) at entry level, clamped, then allocated proportionally
+  // ─── MPF (US only) — entry-level ad valorem, clamped to FY2026 inflation-adjusted
+  // floor ($34.58) and ceiling cap ($670.86), then allocated proportionally across
+  // line items by FOB share. Uses safeSubtotalSrc with a fallback structural base
+  // of 1 to prevent NaN / zero-division runtime crashes on sample / promotional
+  // invoices where the global subtotal evaluates to 0. EXCLUSIVELY inside the
+  // U.S. region condition (UK / EU / AU have no MPF equivalent). ───
   let mpfTotal = 0;
   if (region === 'US' && rule.mpfRate) {
     const raw = subtotalSrc * rule.mpfRate;
+    // Clamp to [mpfMin, mpfMax] = [$34.58, $670.86] (FY2026 CBP fee schedule, effective Oct 1 2025)
     mpfTotal = Math.max(rule.mpfMin ?? 0, Math.min(rule.mpfMax ?? Infinity, raw));
     const mpfDest = x(mpfTotal);
+    // Safe base for proportional allocation — falls back to structural 1 when
+    // subtotalSrc is 0 (sample / promotional POs) to prevent NaN / zero-division.
+    const safeSubtotalSrc = subtotalSrc > 0 ? subtotalSrc : 1;
+    // Sum of FOB values across all line items (already FX-converted) — used as
+    // the proportional-allocation denominator; falls back to safeSubtotalSrc when 0.
+    const fobSum = lineBreakdown.reduce((s, l) => s + l.fobValue, 0);
+    const safeFobSum = fobSum > 0 ? fobSum : safeSubtotalSrc;
     for (const lb of lineBreakdown) {
-      const share = subtotalSrc > 0 ? 0 : 0;
-      void share;
-      lb.mpf = round(mpfDest * (lineBreakdown.reduce((s, l) => s + l.fobValue, 0) > 0
-        ? (lb.fobValue / lineBreakdown.reduce((s, l) => s + l.fobValue, 0))
-        : 0));
+      const share = lb.fobValue / safeFobSum;
+      lb.mpf = round(mpfDest * share);
     }
   }
 
@@ -272,15 +282,102 @@ export async function calculateLandedCost(
   // Australia Import Processing Charge — a FLAT fee in AUD (the destination currency),
   // not ad valorem. AUD 50 for formal entries (≥ AUD 10,000), AUD 40 between AUD 1,000
   // and AUD 10,000, no charge for low-value (under AUD 1,000, SAC).
+  // The flat AUD 50 IPC is ASSESSED EXCLUSIVELY on consignments valued at AUD 10,000 or
+  // greater — per the user's directive. AU GST (10%) is computed on the combined sum of
+  // (Customs Value + Duty Total + International Freight + Insurance) — see the AU branch
+  // of the per-line VAT loop above where vatBase = cifValue + duty = (FOB + freight +
+  // insurance + other) + duty. ✓ already correctly implemented.
   let ipcTotal = 0;
   if (region === 'AU') {
     if (subtotal >= 10000) ipcTotal = rule.ipcFlat ?? 0;
     else if (subtotal >= 1000) ipcTotal = rule.ipcFlatLow ?? 0;
   }
 
+  // ─── EU e-commerce parcel regime (Reg (EU) 2017/2455, in force 1 Jul 2021) ───
+  // The historical €150 de minimis customs duty exemption has been PERMANENTLY REMOVED.
+  // For all incoming B2C / parcel line items where the intrinsic value evaluates to €150
+  // or less, apply:
+  //   • a flat €3 customs duty fee per unique HS6 line item
+  //   • a mandatory €2 handling fee per customs declaration line item
+  // VAT must be calculated on top of (product value + this new duty baseline + handling).
+  // The flat fees are in EUR — converted to destination currency via the same FX rate
+  // applied to the rest of the shipment. Only fires for region === 'EU' AND when the
+  // PO-level subtotal in EUR terms is ≤ the threshold (€150).
+  let euParcelDutyTotal = 0;
+  let euParcelHandlingTotal = 0;
+  if (region === 'EU' && rule.euParcelFlatDutyPerHs6 && rule.euParcelHandlingFeePerLine && rule.euParcelThreshold) {
+    // Compute the intrinsic value of the consignment in EUR — if it's ≤ €150 the flat
+    // parcel regime applies to ALL line items (the threshold is consignment-level, not
+    // per-line). Convert subtotal (already in destination currency) back to EUR using
+    // the inverse FX rate. EUR is the destination currency for EU shipments, so subtotal
+    // is already in EUR — no conversion needed.
+    const intrinsicValueEUR = dest.currency === 'EUR'
+      ? subtotal
+      : subtotal / Math.max(0.0001, fx.rate);  // defensive — EU destination currency is always EUR
+    if (intrinsicValueEUR <= rule.euParcelThreshold) {
+      // Flat €3 customs duty per UNIQUE HS6 line item — collect the set of unique
+      // first-6-digit HS codes across the breakdown, charge €3 each.
+      const uniqueHs6 = new Set<string>();
+      for (const lb of lineBreakdown) {
+        const hs = (lb.hsCode ?? '').replace(/[^0-9]/g, '').slice(0, 6);
+        if (hs.length >= 6) uniqueHs6.add(hs);
+      }
+      const flatDutyPerLinePerEUR = rule.euParcelFlatDutyPerHs6;  // €3
+      const handlingPerLinePerEUR = rule.euParcelHandlingFeePerLine; // €2
+      // Convert EUR fees to destination currency (if EU destination is non-EUR — e.g. PLN, SEK)
+      const feeFx = dest.currency === 'EUR' ? 1 : fx.rate;
+      euParcelDutyTotal = round(uniqueHs6.size * flatDutyPerLinePerEUR * feeFx);
+      euParcelHandlingTotal = round(lineBreakdown.length * handlingPerLinePerEUR * feeFx);
+      // Re-baseline the VAT: VAT must be calculated on (product value + new duty + handling).
+      // The per-line VAT already computed (cifValue + duty) * vatRate — add the parcel fees
+      // proportionally so VAT captures them. This adds an extra VAT top-up.
+      const parcelFeesTotal = euParcelDutyTotal + euParcelHandlingTotal;
+      vatTotal = round(vatTotal + parcelFeesTotal * dest.vatRate);
+    }
+  }
+
+  // ─── Carbon penalty avoidance savings (UK ETS + EU ETS frameworks) ───
+  // Distinct, un-blended metric — NOT added to totalLandedCost or effectiveRate.
+  // Computes the carbon-cost savings from choosing the current modeOfTransport
+  // vs the higher-emission air-freight baseline, valued at the destination
+  // region's ETS carbon price (UK ETS £83/tCO2e; EU ETS €100/tCO2e as of 2026).
+  //   • Air-freight emissions factor: 500g CO2e per tonne-km (highest)
+  //   • Ocean-freight emissions factor: 16g CO2e per tonne-km (lowest)
+  //   • Rail-freight emissions factor: 22g CO2e per tonne-km
+  //   • Truck-freight emissions factor: 50g CO2e per tonne-km
+  // The savings = (airFactor - modeFactor) * estimatedTonneKm * carbonPricePerTonne / 1000.
+  // We use the freight cost as a proxy for tonne-km (since the PO doesn't carry weight
+  // or distance explicitly) at a rough USD$1 = 1 tonne-km conversion factor — so the
+  // savings are an order-of-magnitude estimate suitable for advisory display.
+  let carbonSavings = 0;
+  if (rule.etsCarbonPricePerTonne && (region === 'UK' || region === 'EU')) {
+    const AIR_EMISSIONS_FACTOR = 0.5;    // kg CO2e per tonne-km
+    const OCEAN_EMISSIONS_FACTOR = 0.016;
+    const RAIL_EMISSIONS_FACTOR = 0.022;
+    const TRUCK_EMISSIONS_FACTOR = 0.05;
+    const mode = (inputs.modeOfTransport ?? 'Ocean').toLowerCase();
+    const modeFactor = mode.includes('ocean') ? OCEAN_EMISSIONS_FACTOR
+      : mode.includes('rail') ? RAIL_EMISSIONS_FACTOR
+      : mode.includes('truck') ? TRUCK_EMISSIONS_FACTOR
+      : mode.includes('air') ? AIR_EMISSIONS_FACTOR
+      : OCEAN_EMISSIONS_FACTOR;  // default to ocean (most common)
+    // No savings if the user picked Air (it IS the baseline) or if the savings factor is 0/negative.
+    const emissionsDelta = AIR_EMISSIONS_FACTOR - modeFactor;
+    if (emissionsDelta > 0 && freight > 0) {
+      // Convert freight from PO currency to destination currency for ETS comparison
+      const freightDestForCarbon = x(freight);
+      // Rough proxy: USD$1 of freight ≈ 1 tonne-km (industry rule-of-thumb for ocean LCL)
+      const estimatedTonneKm = freightDestForCarbon;
+      const carbonPricePerTonne = rule.etsCarbonPricePerTonne;
+      // Savings = (emissionsDelta in kg/tonne-km) * tonneKm * carbonPrice / 1000 (to convert kg → tonnes)
+      carbonSavings = round(estimatedTonneKm * emissionsDelta * carbonPricePerTonne / 1000);
+    }
+  }
+
   const totalLandedCost = round(
     subtotal + freightDest + insuranceDest + otherChargesDest + dutyTotal + chinaReciprocalTotal +
-    cnhkEoTotal + anyCountryTotal + vatTotal + mpfTotal + hmfTotal + otherLeviesTotal + otherImportChargesDest + ipcTotal
+    cnhkEoTotal + anyCountryTotal + vatTotal + mpfTotal + hmfTotal + otherLeviesTotal + otherImportChargesDest + ipcTotal +
+    (euParcelDutyTotal + euParcelHandlingTotal)  // EU parcel regime fees (already added to VAT base above)
   );
   const effectiveRate = subtotal > 0 ? totalLandedCost / subtotal - 1 : 0;
 
@@ -366,7 +463,21 @@ export async function calculateLandedCost(
   if (mpfTotal > 0) push('+ MPF (Merchandise Processing Fee)', mpfTotal, rule.mpfRate, 'US 0.3464%, floored/capped');
   if (hmfTotal > 0) push('+ HMF (Harbor Maintenance Fee)', hmfTotal, rule.hmfRate, 'US ocean 0.125% (not assessed for rail/air)');
   if (region === 'US' && !hmfApplies) waterfall.push({ label: '– HMF not assessed', amount: 0, cumulative: cum, note: `${mode} mode — HMF is ocean-only (19 U.S.C. §4462)` });
-  if (region === 'AU' && ipcTotal > 0) push('+ Import Processing Charge (IPC)', ipcTotal, undefined, `ABF flat A$${ipcTotal} (≥ A$10,000 formal entry)`);
+  if (region === 'AU' && ipcTotal > 0) push('+ Import Processing Charge (IPC)', ipcTotal, undefined, `ABF flat A$${ipcTotal} (≥ A$10,000 formal entry — exclusive threshold per FY2026 schedule)`);
+  // EU e-commerce parcel regime waterfall steps (only when ≤ €150 de-minimis regime fires)
+  if (region === 'EU' && euParcelDutyTotal > 0) push('+ EU parcel flat customs duty (€3 per unique HS6)', euParcelDutyTotal, undefined, `Reg (EU) 2017/2455 — €150 de minimis REMOVED 1 Jul 2021; flat €3 per unique HS6 line item for parcels ≤ €150`);
+  if (region === 'EU' && euParcelHandlingTotal > 0) push('+ EU parcel handling fee (€2 per declaration line)', euParcelHandlingTotal, undefined, `Reg (EU) 2017/2455 — flat €2 per customs declaration line; VAT applied on top of (product value + duty + handling)`);
+  // Carbon penalty avoidance savings — distinct, un-blended metric, NOT in the running cumulative
+  // (it's a SAVINGS, not a cost; would subtract from the landed cost, but per the directive it's
+  // surfaced separately as a payload attribute + DB row rather than blended into totalLandedCost).
+  if (carbonSavings > 0) {
+    waterfall.push({
+      label: `🌍 Carbon penalty avoidance savings (${region} ETS)`,
+      amount: -carbonSavings,
+      cumulative: cum,
+      note: `${region === 'UK' ? 'UK ETS' : 'EU ETS'} carbon-price valuation of (air - ${inputs.modeOfTransport ?? 'Ocean'}) emissions delta on freight. Distinct, un-blended metric — NOT added to total landed cost; surfaced as a separate payload attribute.`,
+    });
+  }
   if (otherLeviesTotal > 0) push('+ Other levies', otherLeviesTotal);
   if (customsBrokerFee) push('+ Customs broker fee', x(customsBrokerFee));
   if (documentationFee) push('+ Documentation fee', x(documentationFee));
@@ -383,6 +494,9 @@ export async function calculateLandedCost(
     otherLevies: otherLeviesTotal, freight: freightDest, insurance: insuranceDest,
     otherImportCharges: otherImportChargesDest,
     totalLandedCost, effectiveRate, fta: ftaAdvisory,
+    euParcelDutyTotal: region === 'EU' ? euParcelDutyTotal : undefined,
+    euParcelHandlingTotal: region === 'EU' ? euParcelHandlingTotal : undefined,
+    carbonSavings: carbonSavings > 0 ? carbonSavings : undefined,
     lineBreakdown, waterfall, notes: rule.notes,
   };
 
@@ -414,6 +528,9 @@ export async function calculateLandedCost(
       poNumber: po.poNumber,
       destinationLabel: dest.label,
       originCountry: po.originCountry ?? null,
+      carbonSavings: carbonSavings > 0 ? carbonSavings : null,
+      euParcelDutyTotal: region === 'EU' && euParcelDutyTotal > 0 ? euParcelDutyTotal : null,
+      euParcelHandlingTotal: region === 'EU' && euParcelHandlingTotal > 0 ? euParcelHandlingTotal : null,
     },
   });
 

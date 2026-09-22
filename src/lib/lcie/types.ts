@@ -171,6 +171,13 @@ export interface RegionCalculation {
   effectiveRate: number;
   // FTA preferential advisory — populated when an FTA covers origin→destination for the line set.
   fta?: FtaAdvisory;
+  // EU e-commerce parcel regime (Reg (EU) 2017/2455, in force 1 Jul 2021):
+  // €150 de minimis REMOVED — flat €3 customs duty per unique HS6 + €2 handling fee per declaration line for parcels ≤ €150.
+  euParcelDutyTotal?: number;       // sum of flat €3 customs duties per unique HS6 line item
+  euParcelHandlingTotal?: number;  // sum of flat €2 handling fees per customs declaration line
+  // Carbon penalty avoidance savings — derived from alternative freight routing under UK ETS + EU ETS.
+  // Distinct, un-blended metric — NOT included in totalLandedCost or effectiveRate; returned as a separate payload attribute.
+  carbonSavings?: number;
   lineBreakdown: LineBreakdown[];
   waterfall: WaterfallStep[]; // step-by-step duty stack for the detailed view
   notes: string;

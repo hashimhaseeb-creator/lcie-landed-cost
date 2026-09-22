@@ -95,5 +95,8 @@ model LandedCostCalculation {
   poNumber              String?   // denormalised for fast display in history list
   destinationLabel      String?   // e.g. "United States" / "Australia"
   originCountry         String?   // ISO-2 origin (denormalised from PO)
+  carbonSavings         Float?    // distinct, un-blended carbon penalty avoidance savings (UK ETS / EU ETS) — alternative freight routing
+  euParcelDutyTotal     Float?    // EU e-commerce parcel: sum of flat €3/HS6 customs duties (parcels ≤ €150)
+  euParcelHandlingTotal Float?    // EU e-commerce parcel: sum of flat €2 handling fees per declaration line
   createdAt     DateTime @default(now())
 }
