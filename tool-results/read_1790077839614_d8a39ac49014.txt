@@ -1,0 +1,583 @@
+     1→/**
+     2→ * LCIE Landed Cost Calculator (destination-aware)
+     3→ * Green G(P)⁴™ Global Operations — LCIE Landed Cost Engine
+     4→ *
+     5→ * Computes the duty stack for ONLY the PO's final destination country:
+     6→ *   - US → HTS duty on FOB + Section 301 + IEEPA + MPF + HMF (no federal VAT), in USD
+     7→ *   - UK → duty on CIF + 20% VAT on (CIF+duty), in GBP (live FX)
+     8→ *   - EU → duty on CIF + member-state VAT on (CIF+duty), in EUR / local (live FX)
+     9→ *
+    10→ * All amounts are computed in the PO (supplier) currency first, then
+    11→ * FX-converted to the destination currency using a live ECB reference rate.
+    12→ * The customer-supplied landed-cost inputs (freight, insurance, customs
+    13→ * broker fee, documentation, duty advance, harbor, inland delivery, …)
+    14→ * feed the CIF base and the final landed cost.
+    15→ */
+    16→
+    17→import { db } from '@/lib/db';
+    18→import { DUTY_RULES } from '@/lib/hs-knowledge-base';
+    19→import { resolveDestination } from './destination';
+    20→import { getFxRate } from './fx';
+    21→import { resolveFta } from './fta';
+    22→import { getRateSnapshot } from './regulatory-intelligence';
+    23→import type { Region, RegionCalculation, LineBreakdown, CalculateResponse, LandedCostInputs, WaterfallStep, FtaAdvisory } from './types';
+    24→
+    25→export async function calculateLandedCost(
+    26→  poId: string,
+    27→  inputs: LandedCostInputs = {},
+    28→): Promise<CalculateResponse> {
+    29→  const po = await db.purchaseOrder.findUnique({
+    30→    where: { id: poId },
+    31→    include: { lineItems: { orderBy: { lineNumber: 'asc' } } },
+    32→  });
+    33→  if (!po) throw new Error('Purchase order not found.');
+    34→
+    35→  // ---- Local-PO short-circuit: if origin country == destination country, no
+    36→  // customs border is crossed → no duty/VAT/MPF/HMF applies. Return a "Not
+    37→  // required" response immediately so the UI can prompt the user, instead of
+    38→  // computing a meaningless duty stack. ----
+    39→  const poOriginCC = (po.originCountry ?? '').toUpperCase().trim();
+    40→  const poDestCC = (po.destinationCountry ?? '').toUpperCase().trim();
+    41→  if (poOriginCC && poDestCC && poOriginCC === poDestCC) {
+    42→    return {
+    43→      poId,
+    44→      poNumber: po.poNumber,
+    45→      originCurrency: po.currency ?? 'USD',
+    46→      destination: {
+    47→        countryCode: poDestCC, countryName: poDestCC, region: 'US' as Region,
+    48→        currency: po.currency ?? 'USD', vatRate: 0, flag: '🏠', label: `${poDestCC} (local shipment)`,
+    49→      },
+    50→      fx: null,
+    51→      calculation: {
+    52→        region: 'US' as Region, label: `${poDestCC} (local shipment)`, flag: '🏠',
+    53→        currency: po.currency ?? 'USD', subtotal: 0, dutyTotal: 0, section301Total: 0,
+    54→        ieepaTotal: 0, chinaReciprocalTotal: 0, cnhkEoTotal: 0, anyCountryTotal: 0,
+    55→        vatTotal: 0, mpfTotal: 0, hmfTotal: 0, hmfApplies: false, modeOfTransport: inputs.modeOfTransport ?? 'Ocean',
+    56→        otherLevies: 0, freight: 0, insurance: 0, otherImportCharges: 0,
+    57→        totalLandedCost: 0, effectiveRate: 0,
+    58→        lineBreakdown: [],
+    59→        waterfall: [{
+    60→          label: '🏠 Not required — local shipment (no customs border crossed)',
+    61→          amount: 0, cumulative: 0,
+    62→          note: `Origin country (${poOriginCC}) == Destination country (${poDestCC}). No import/export duty, VAT, GST, MPF, or HMF applies. Only domestic sales tax (out of scope for LCIE) may apply.`,
+    63→        }],
+    64→        notes: 'Local shipment — origin and destination are the same country. No customs duty / VAT / MPF / HMF applies. If you expected an international shipment, check the PO\'s origin and destination country fields.',
+    65→      },
+    66→      calculatedAt: new Date().toISOString(),
+    67→    };
+    68→  }
+    69→
+    70→  // ---- Missing destination short-circuit: if the PO didn't specify a
+    71→  // destination country (and the user didn't override via the UI dropdown),
+    72→  // return an explicit error so the UI can prompt the user to pick one. ----
+    73→  if (!poDestCC) {
+    74→    throw new Error('Destination country not specified — the parser could not infer it from the PO text. Please select a destination country from the dropdown above before running the LCIE agent.');
+    75→  }
+    76→  if (!poOriginCC) {
+    77→    throw new Error('Origin country not specified — the parser could not infer it from the PO text. Please select an origin country from the dropdown above before running the LCIE agent.');
+    78→  }
+    79→
+    80→  // ---- resolve destination region + currency + VAT ----
+    81→  const dest = resolveDestination(poDestCC);
+    82→  const region: Region = dest.region;
+    83→
+    84→  // ---- user-supplied landed-cost inputs (default to PO-level values) ----
+    85→  const freight = num(inputs.freight ?? po.freight);
+    86→  const insurance = num(inputs.insurance ?? po.insurance);
+    87→  const otherCharges = num(inputs.otherCharges ?? po.otherCharges);
+    88→  const customsBrokerFee = num(inputs.customsBrokerFee);
+    89→  const documentationFee = num(inputs.documentationFee);
+    90→  const dutyAdvanceFee = num(inputs.dutyAdvanceFee);
+    91→  const harborOrPortFee = num(inputs.harborOrPortFee);
+    92→  const inlandDelivery = num(inputs.inlandDestinationDelivery);
+    93→  const otherImportCharges =
+    94→    customsBrokerFee + documentationFee + dutyAdvanceFee + harborOrPortFee + inlandDelivery;
+    95→
+    96→  // ---- FX: PO currency → destination currency ----
+    97→  const poCurrency = po.currency ?? 'USD';
+    98→  const fx = await getFxRate(poCurrency, dest.currency);
+    99→  const x = (n: number) => n * fx.rate; // PO-currency → destination-currency
+   100→
+   101→  // ---- load AI determinations for THIS region only ----
+   102→  const determinations = await db.hsDetermination.findMany({
+   103→    where: { lineItem: { poId }, region },
+   104→  });
+   105→  const detByLine = new Map<string, (typeof determinations[number] | undefined)>();
+   106→  for (const li of po.lineItems) {
+   107→    detByLine.set(li.id, determinations.find((d) => d.lineItemId === li.id));
+   108→  }
+   109→
+   110→  const rule = DUTY_RULES[region];
+   111→  const subtotalSrc = po.lineItems.reduce((s, li) => s + li.quantity * li.unitValue, 0);
+   112→
+   113→  const lineBreakdown: LineBreakdown[] = [];
+   114→  let dutyTotal = 0, section301Total = 0, ieepaTotal = 0,
+   115→    chinaReciprocalTotal = 0, cnhkEoTotal = 0, anyCountryTotal = 0,
+   116→    vatTotal = 0, hmfTotal = 0, otherLeviesTotal = 0;
+   117→
+   118→  // HMF applies only to ocean-mode shipments (19 U.S.C. §4462). Rail/air/truck = no HMF.
+   119→  const mode = (inputs.modeOfTransport ?? 'Ocean').toLowerCase();
+   120→  const hmfApplies = region === 'US' && mode.includes('ocean');
+   121→
+   122→  for (const li of po.lineItems) {
+   123→    const fobValue = li.quantity * li.unitValue; // PO currency
+   124→    const share = subtotalSrc > 0 ? fobValue / subtotalSrc : 0;
+   125→    const lineFreight = freight * share;
+   126→    const lineInsurance = insurance * share;
+   127→    const lineOther = otherCharges * share;
+   128→    const cifValue = fobValue + lineFreight + lineInsurance + lineOther; // PO currency
+   129→
+   130→    const det = detByLine.get(li.id);
+   131→    const dutyRate = det?.dutyRate ?? 0;
+   132→    const vatRate = region === 'US' ? 0 : (det?.vatRate ?? dest.vatRate ?? 0);
+   133→
+   134→    // parse the 2025 Chapter-99 provisions from the determination's additionalLevies JSON.
+   135→    // The agent stores: ChinaReciprocal (9903.88.01, 25%), CNHKEO (9903.01.24, 20%),
+   136→    // AnyCountry (9903.01.25, 10%), MPF, HMF. Legacy Section301/IEEPA keys are mapped.
+   137→    let chinaReciprocalRate = 0, cnhkEoRate = 0, anyCountryRate = 0, lineOtherLevies = 0;
+   138→    if (det?.additionalLevies) {
+   139→      try {
+   140→        const obj = JSON.parse(det.additionalLevies) as Record<string, number>;
+   141→        if (region === 'US') {
+   142→          chinaReciprocalRate = num(obj.ChinaReciprocal ?? obj.Section301);
+   143→          cnhkEoRate = num(obj.CNHKEO ?? obj.CNHK_EO);
+   144→          anyCountryRate = num(obj.AnyCountry ?? obj.AnyCountryReciprocal);
+   145→          // legacy IEEPA fallback: if only IEEPA present (old determinations), split 20%+10%
+   146→          if (!cnhkEoRate && !anyCountryRate && obj.IEEPA) {
+   147→            cnhkEoRate = Math.min(0.20, num(obj.IEEPA));
+   148→            anyCountryRate = Math.max(0, num(obj.IEEPA) - 0.20) || 0.10;
+   149→          }
+   150→        }
+   151→        // Aggregator: only rates between 0 and 1 (i.e. genuine ad-valorem levy
+   152→        // rates) qualify as "other levies" to be multiplied by the cif base.
+   153→        // Anything else (e.g. `gstRate: 0.10`, `vatRate: 0.20`, `ipcFlat: 50`)
+   154→        // is meta/structural config stored alongside the determination, NOT a
+   155→        // duty to be assessed here — the calculator already applies GST/VAT
+   156→        // and the flat Import Processing Charge from the DutyRule separately.
+   157→        // Excluded keys (US Chapter-99 / MPF / HMF) are also skipped because
+   158→        // they are handled as their own waterfall steps.
+   159→        const EXCLUDED = new Set([
+   160→          'MPF', 'HMF', 'Section301', 'IEEPA',
+   161→          'ChinaReciprocal', 'CNHKEO', 'CNHK_EO', 'AnyCountry', 'AnyCountryReciprocal',
+   162→          // meta fields stored by the agent — NOT levies to be assessed here:
+   163→          'vatRate', 'gstRate', 'ipcFlat', 'ipcFlatLow',
+   164→        ]);
+   165→        for (const [k, v] of Object.entries(obj)) {
+   166→          if (EXCLUDED.has(k)) continue;
+   167→          if (typeof v === 'number' && v > 0 && v < 1) {
+   168→            lineOtherLevies += cifValue * v;
+   169→          }
+   170→        }
+   171→      } catch { /* ignore */ }
+   172→    }
+   173→    const isCn = ((li.originCountry ?? po.originCountry ?? 'CN') + '').toUpperCase() === 'CN';
+   174→    // 9903.88.01 (25%) + 9903.01.24 (20%) apply only to China origin; 9903.01.25 (10%) to any country.
+   175→    const section301Rate = chinaReciprocalRate;            // back-compat alias
+   176→    const ieepaRate = cnhkEoRate + anyCountryRate;          // back-compat alias
+   177→
+   178→    const dutyBase = rule.dutyCalcBase === 'CIF' ? cifValue : fobValue;
+   179→    const duty = dutyBase * dutyRate;
+   180→    const chinaReciprocal = region === 'US' && isCn ? fobValue * chinaReciprocalRate : 0;
+   181→    const cnhkEo = region === 'US' && isCn ? fobValue * cnhkEoRate : 0;
+   182→    const anyCountry = region === 'US' ? fobValue * anyCountryRate : 0;
+   183→    const section301 = chinaReciprocal;                    // back-compat alias
+   184→    const ieepa = cnhkEo + anyCountry;                      // back-compat alias
+   185→    let hmf = 0;
+   186→    if (hmfApplies && rule.hmfRate) hmf = fobValue * rule.hmfRate;
+   187→    let vat = 0;
+   188→    if (region !== 'US') {
+   189→      const vatBase = rule.vatCalcBase === 'CIF_plus_duty' ? cifValue + duty : cifValue;
+   190→      vat = vatBase * vatRate;
+   191→    }
+   192→
+   193→    dutyTotal += duty;
+   194→    section301Total += section301; chinaReciprocalTotal += chinaReciprocal;
+   195→    ieepaTotal += ieepa; cnhkEoTotal += cnhkEo; anyCountryTotal += anyCountry;
+   196→    vatTotal += vat;
+   197→    hmfTotal += hmf;
+   198→    otherLeviesTotal += lineOtherLevies;
+   199→
+   200→    lineBreakdown.push({
+   201→      lineItemId: li.id,
+   202→      lineNumber: li.lineNumber,
+   203→      description: li.description,
+   204→      hsCode: det?.hsCode ?? '—',
+   205→      tariffDescription: det?.tariffDescription ?? undefined,
+   206→      dutyRate, dutyType: det?.dutyType ?? 'ad valorem',
+   207→      vatRate, section301Rate, ieepaRate,
+   208→      chinaReciprocalRate, cnhkEoRate, anyCountryRate,
+   209→      confidence: det?.confidence ?? 0,
+   210→      reasoning: det?.reasoning ?? undefined,
+   211→      fobValue: round(x(fobValue)),
+   212→      cifValue: round(x(cifValue)),
+   213→      duty: round(x(duty)),
+   214→      section301: round(x(section301)),
+   215→      ieepa: round(x(ieepa)),
+   216→      chinaReciprocal: round(x(chinaReciprocal)),
+   217→      cnhkEo: round(x(cnhkEo)),
+   218→      anyCountry: round(x(anyCountry)),
+   219→      vat: round(x(vat)),
+   220→      mpf: 0, // allocated after PO-level MPF
+   221→      hmf: round(x(hmf)),
+   222→      otherLevies: round(x(lineOtherLevies)),
+   223→      lineLandedCost: 0,
+   224→    });
+   225→  }
+   226→
+   227→  // ─── MPF (US only) — entry-level ad valorem, clamped to FY2026 inflation-adjusted
+   228→  // floor ($34.58) and ceiling cap ($670.86), then allocated proportionally across
+   229→  // line items by FOB share. Uses safeSubtotalSrc with a fallback structural base
+   230→  // of 1 to prevent NaN / zero-division runtime crashes on sample / promotional
+   231→  // invoices where the global subtotal evaluates to 0. EXCLUSIVELY inside the
+   232→  // U.S. region condition (UK / EU / AU have no MPF equivalent). ───
+   233→  let mpfTotal = 0;
+   234→  if (region === 'US' && rule.mpfRate) {
+   235→    const raw = subtotalSrc * rule.mpfRate;
+   236→    // Clamp to [mpfMin, mpfMax] = [$34.58, $670.86] (FY2026 CBP fee schedule, effective Oct 1 2025)
+   237→    mpfTotal = Math.max(rule.mpfMin ?? 0, Math.min(rule.mpfMax ?? Infinity, raw));
+   238→    const mpfDest = x(mpfTotal);
+   239→    // Safe base for proportional allocation — falls back to structural 1 when
+   240→    // subtotalSrc is 0 (sample / promotional POs) to prevent NaN / zero-division.
+   241→    const safeSubtotalSrc = subtotalSrc > 0 ? subtotalSrc : 1;
+   242→    // Sum of FOB values across all line items (already FX-converted) — used as
+   243→    // the proportional-allocation denominator; falls back to safeSubtotalSrc when 0.
+   244→    const fobSum = lineBreakdown.reduce((s, l) => s + l.fobValue, 0);
+   245→    const safeFobSum = fobSum > 0 ? fobSum : safeSubtotalSrc;
+   246→    for (const lb of lineBreakdown) {
+   247→      const share = lb.fobValue / safeFobSum;
+   248→      lb.mpf = round(mpfDest * share);
+   249→    }
+   250→  }
+   251→
+   252→  // finalize per-line landed cost (destination currency)
+   253→  for (const lb of lineBreakdown) {
+   254→    const share = lineBreakdown.reduce((s, l) => s + l.fobValue, 0) > 0
+   255→      ? lb.fobValue / lineBreakdown.reduce((s, l) => s + l.fobValue, 0)
+   256→      : 0;
+   257→    lb.lineLandedCost = round(
+   258→      lb.fobValue + lb.duty + lb.section301 + lb.ieepa + lb.vat + lb.mpf + lb.hmf + lb.otherLevies +
+   259→      x(freight + insurance + otherCharges) * share
+   260→    );
+   261→  }
+   262→
+   263→  // ---- totals (destination currency) ----
+   264→  const subtotal = round(x(subtotalSrc));
+   265→  const freightDest = round(x(freight));
+   266→  const insuranceDest = round(x(insurance));
+   267→  const otherChargesDest = round(x(otherCharges));
+   268→  const otherImportChargesDest = round(x(otherImportCharges));
+   269→  const cifTotal = round(subtotal + freightDest + insuranceDest + otherChargesDest);
+   270→
+   271→  dutyTotal = round(x(dutyTotal));
+   272→  section301Total = round(x(section301Total));
+   273→  ieepaTotal = round(x(ieepaTotal));
+   274→  chinaReciprocalTotal = round(x(chinaReciprocalTotal));
+   275→  cnhkEoTotal = round(x(cnhkEoTotal));
+   276→  anyCountryTotal = round(x(anyCountryTotal));
+   277→  vatTotal = round(x(vatTotal));
+   278→  mpfTotal = round(x(mpfTotal));
+   279→  hmfTotal = round(x(hmfTotal));
+   280→  otherLeviesTotal = round(x(otherLeviesTotal));
+   281→
+   282→  // Australia Import Processing Charge — a FLAT fee in AUD (the destination currency),
+   283→  // not ad valorem. AUD 50 for formal entries (≥ AUD 10,000), AUD 40 between AUD 1,000
+   284→  // and AUD 10,000, no charge for low-value (under AUD 1,000, SAC).
+   285→  // The flat AUD 50 IPC is ASSESSED EXCLUSIVELY on consignments valued at AUD 10,000 or
+   286→  // greater — per the user's directive. AU GST (10%) is computed on the combined sum of
+   287→  // (Customs Value + Duty Total + International Freight + Insurance) — see the AU branch
+   288→  // of the per-line VAT loop above where vatBase = cifValue + duty = (FOB + freight +
+   289→  // insurance + other) + duty. ✓ already correctly implemented.
+   290→  let ipcTotal = 0;
+   291→  if (region === 'AU') {
+   292→    if (subtotal >= 10000) ipcTotal = rule.ipcFlat ?? 0;
+   293→    else if (subtotal >= 1000) ipcTotal = rule.ipcFlatLow ?? 0;
+   294→  }
+   295→
+   296→  // ─── EU e-commerce parcel regime (Reg (EU) 2017/2455, in force 1 Jul 2021) ───
+   297→  // The historical €150 de minimis customs duty exemption has been PERMANENTLY REMOVED.
+   298→  // For all incoming B2C / parcel line items where the intrinsic value evaluates to €150
+   299→  // or less, apply:
+   300→  //   • a flat €3 customs duty fee per unique HS6 line item
+   301→  //   • a mandatory €2 handling fee per customs declaration line item
+   302→  // VAT must be calculated on top of (product value + this new duty baseline + handling).
+   303→  // The flat fees are in EUR — converted to destination currency via the same FX rate
+   304→  // applied to the rest of the shipment. Only fires for region === 'EU' AND when the
+   305→  // PO-level subtotal in EUR terms is ≤ the threshold (€150).
+   306→  let euParcelDutyTotal = 0;
+   307→  let euParcelHandlingTotal = 0;
+   308→  if (region === 'EU' && rule.euParcelFlatDutyPerHs6 && rule.euParcelHandlingFeePerLine && rule.euParcelThreshold) {
+   309→    // Compute the intrinsic value of the consignment in EUR — if it's ≤ €150 the flat
+   310→    // parcel regime applies to ALL line items (the threshold is consignment-level, not
+   311→    // per-line). Convert subtotal (already in destination currency) back to EUR using
+   312→    // the inverse FX rate. EUR is the destination currency for EU shipments, so subtotal
+   313→    // is already in EUR — no conversion needed.
+   314→    const intrinsicValueEUR = dest.currency === 'EUR'
+   315→      ? subtotal
+   316→      : subtotal / Math.max(0.0001, fx.rate);  // defensive — EU destination currency is always EUR
+   317→    if (intrinsicValueEUR <= rule.euParcelThreshold) {
+   318→      // Flat €3 customs duty per UNIQUE HS6 line item — collect the set of unique
+   319→      // first-6-digit HS codes across the breakdown, charge €3 each.
+   320→      const uniqueHs6 = new Set<string>();
+   321→      for (const lb of lineBreakdown) {
+   322→        const hs = (lb.hsCode ?? '').replace(/[^0-9]/g, '').slice(0, 6);
+   323→        if (hs.length >= 6) uniqueHs6.add(hs);
+   324→      }
+   325→      const flatDutyPerLinePerEUR = rule.euParcelFlatDutyPerHs6;  // €3
+   326→      const handlingPerLinePerEUR = rule.euParcelHandlingFeePerLine; // €2
+   327→      // Convert EUR fees to destination currency (if EU destination is non-EUR — e.g. PLN, SEK)
+   328→      const feeFx = dest.currency === 'EUR' ? 1 : fx.rate;
+   329→      euParcelDutyTotal = round(uniqueHs6.size * flatDutyPerLinePerEUR * feeFx);
+   330→      euParcelHandlingTotal = round(lineBreakdown.length * handlingPerLinePerEUR * feeFx);
+   331→      // Re-baseline the VAT: VAT must be calculated on (product value + new duty + handling).
+   332→      // The per-line VAT already computed (cifValue + duty) * vatRate — add the parcel fees
+   333→      // proportionally so VAT captures them. This adds an extra VAT top-up.
+   334→      const parcelFeesTotal = euParcelDutyTotal + euParcelHandlingTotal;
+   335→      vatTotal = round(vatTotal + parcelFeesTotal * dest.vatRate);
+   336→    }
+   337→  }
+   338→
+   339→  // ─── Carbon penalty avoidance savings (UK ETS + EU ETS frameworks) ───
+   340→  // Distinct, un-blended metric — NOT added to totalLandedCost or effectiveRate.
+   341→  // Computes the carbon-cost savings from choosing the current modeOfTransport
+   342→  // vs the higher-emission air-freight baseline, valued at the destination
+   343→  // region's ETS carbon price (UK ETS £83/tCO2e; EU ETS €100/tCO2e as of 2026).
+   344→  //   • Air-freight emissions factor: 500g CO2e per tonne-km (highest)
+   345→  //   • Ocean-freight emissions factor: 16g CO2e per tonne-km (lowest)
+   346→  //   • Rail-freight emissions factor: 22g CO2e per tonne-km
+   347→  //   • Truck-freight emissions factor: 50g CO2e per tonne-km
+   348→  // The savings = (airFactor - modeFactor) * estimatedTonneKm * carbonPricePerTonne / 1000.
+   349→  // We use the freight cost as a proxy for tonne-km (since the PO doesn't carry weight
+   350→  // or distance explicitly) at a rough USD$1 = 1 tonne-km conversion factor — so the
+   351→  // savings are an order-of-magnitude estimate suitable for advisory display.
+   352→  let carbonSavings = 0;
+   353→  if (rule.etsCarbonPricePerTonne && (region === 'UK' || region === 'EU')) {
+   354→    const AIR_EMISSIONS_FACTOR = 0.5;    // kg CO2e per tonne-km
+   355→    const OCEAN_EMISSIONS_FACTOR = 0.016;
+   356→    const RAIL_EMISSIONS_FACTOR = 0.022;
+   357→    const TRUCK_EMISSIONS_FACTOR = 0.05;
+   358→    const mode = (inputs.modeOfTransport ?? 'Ocean').toLowerCase();
+   359→    const modeFactor = mode.includes('ocean') ? OCEAN_EMISSIONS_FACTOR
+   360→      : mode.includes('rail') ? RAIL_EMISSIONS_FACTOR
+   361→      : mode.includes('truck') ? TRUCK_EMISSIONS_FACTOR
+   362→      : mode.includes('air') ? AIR_EMISSIONS_FACTOR
+   363→      : OCEAN_EMISSIONS_FACTOR;  // default to ocean (most common)
+   364→    // No savings if the user picked Air (it IS the baseline) or if the savings factor is 0/negative.
+   365→    const emissionsDelta = AIR_EMISSIONS_FACTOR - modeFactor;
+   366→    if (emissionsDelta > 0 && freight > 0) {
+   367→      // Convert freight from PO currency to destination currency for ETS comparison
+   368→      const freightDestForCarbon = x(freight);
+   369→      // Rough proxy: USD$1 of freight ≈ 1 tonne-km (industry rule-of-thumb for ocean LCL)
+   370→      const estimatedTonneKm = freightDestForCarbon;
+   371→      const carbonPricePerTonne = rule.etsCarbonPricePerTonne;
+   372→      // Savings = (emissionsDelta in kg/tonne-km) * tonneKm * carbonPrice / 1000 (to convert kg → tonnes)
+   373→      carbonSavings = round(estimatedTonneKm * emissionsDelta * carbonPricePerTonne / 1000);
+   374→    }
+   375→  }
+   376→
+   377→  const totalLandedCost = round(
+   378→    subtotal + freightDest + insuranceDest + otherChargesDest + dutyTotal + chinaReciprocalTotal +
+   379→    cnhkEoTotal + anyCountryTotal + vatTotal + mpfTotal + hmfTotal + otherLeviesTotal + otherImportChargesDest + ipcTotal +
+   380→    (euParcelDutyTotal + euParcelHandlingTotal)  // EU parcel regime fees (already added to VAT base above)
+   381→  );
+   382→  const effectiveRate = subtotal > 0 ? totalLandedCost / subtotal - 1 : 0;
+   383→
+   384→  // ---- FTA (Free Trade Agreement) preferential-tariff advisory ----
+   385→  // Resolves the in-force FTA covering origin→destination (USMCA, AUSFTA,
+   386→  // UK-EU TCA, EU FTA network, RCEP, CPTPP, etc.) and surfaces the preferential
+   387→  // rate vs the MFN rate so the importer can decide whether to claim it.
+   388→  // Eligibility still requires a valid proof of origin + meeting the rule.
+   389→  const originISO2 = (po.originCountry ?? '').toUpperCase();
+   390→  const destISO2 = dest.countryCode;
+   391→  const weightedMfn = avgDutyRate(lineBreakdown) ?? 0;
+   392→  const ftaResolution = resolveFta(originISO2, destISO2, weightedMfn);
+   393→  const ftaAdvisory: FtaAdvisory = {
+   394→    originISO2,
+   395→    destinationISO2: destISO2,
+   396→    applies: ftaResolution.preferential.applies,
+   397→    agreementName: ftaResolution.preferential.agreementName,
+   398→    agreementShortName: ftaResolution.preferential.agreementShortName,
+   399→    preferentialRate: ftaResolution.preferential.preferentialRate,
+   400→    preferentialType: ftaResolution.preferential.preferentialType,
+   401→    mfnRate: weightedMfn,
+   402→    savingVsMfn: Math.max(0, weightedMfn - ftaResolution.preferential.preferentialRate),
+   403→    ruleOfOriginSummary: ftaResolution.preferential.ruleOfOriginSummary,
+   404→    notes: ftaResolution.preferential.notes,
+   405→    alternatives: ftaResolution.alternatives.map((a) => ({
+   406→      agreementShortName: a.agreementShortName,
+   407→      preferentialRate: a.preferentialRate,
+   408→      preferentialType: a.preferentialType,
+   409→    })),
+   410→  };
+   411→
+   412→  // ---- waterfall: the detailed step-by-step duty stack ----
+   413→  const waterfall: WaterfallStep[] = [];
+   414→  let cum = 0;
+   415→  const push = (label: string, amount: number, rate?: number, note?: string) => {
+   416→    cum = round(cum + amount);
+   417→    waterfall.push({ label, rate, amount: round(amount), cumulative: cum, note });
+   418→  };
+   419→  push('FOB subtotal (goods value)', subtotal, undefined, 'Sum of line item values, pre-freight');
+   420→  if (freightDest > 0) push('+ Freight', freightDest);
+   421→  if (insuranceDest > 0) push('+ Insurance', insuranceDest);
+   422→  if (otherChargesDest > 0) push('+ Other handling', otherChargesDest);
+   423→  if (freightDest || insuranceDest || otherChargesDest) {
+   424→    waterfall.push({ label: '= CIF value (customs value)', amount: cifTotal, cumulative: cifTotal, note: rule.dutyCalcBase === 'CIF' ? 'Duty base for UK/EU' : 'US assesses duty on FOB' });
+   425→    cum = cifTotal;
+   426→  }
+   427→  if (dutyTotal > 0) push(`+ Import duty (MFN)`, dutyTotal, avgDutyRate(lineBreakdown), 'AI-determined HS rate × calc base');
+   428→  // FTA advisory step — shows the preferential rate available under the in-force
+   429→  // FTA between this origin and destination, with the duty saving vs MFN.
+   430→  // Not added to the running total (claim requires proof of origin); surfaced for transparency.
+   431→  if (ftaAdvisory.applies) {
+   432→    const prefDuty = round(dutyTotal * ftaAdvisory.preferentialRate / Math.max(0.0001, weightedMfn || 1));
+   433→    const saving = round(dutyTotal - prefDuty);
+   434→    waterfall.push({
+   435→      label: `FTA ${ftaAdvisory.agreementShortName} preferential`,
+   436→      amount: prefDuty,
+   437→      rate: ftaAdvisory.preferentialRate,
+   438→      cumulative: cum,
+   439→      note: `${ftaAdvisory.agreementName} · preferential ${(ftaAdvisory.preferentialRate * 100).toFixed(1)}% vs MFN ${(weightedMfn * 100).toFixed(1)}% · saves ${sym(dest.currency)}${saving.toLocaleString()} (claim requires proof of origin)`,
+   440→    });
+   441→  }
+   442→  // Snapshot-driven waterfall labels — the rate + effectiveDate + citation come from
+   443→  // the regulatory-intelligence module so they auto-update when the user clicks
+   444→  // "Verify current rates" on the UI (or after the 24-hour TTL cache expires).
+   445→  const snap = getRateSnapshot();
+   446→  const snapRec = (k: string) => snap.rates.find((r) => r.key === k);
+   447→  if (chinaReciprocalTotal > 0) {
+   448→    const e = snapRec('us-9903.88.x');
+   449→    push('+ 9903.88.x China reciprocal', chinaReciprocalTotal, avgRate(lineBreakdown, 'chinaReciprocalRate'),
+   450→      `${e?.citation ?? 'EO 14257 Chapter-99'} — effective ${e?.effectiveDate ?? 'N/A'} · rate-snapshot verified ${e?.lastVerifiedAt?.slice(0, 10) ?? 'N/A'}`);
+   451→  }
+   452→  if (cnhkEoTotal > 0) {
+   453→    const e = snapRec('us-9903.01.24');
+   454→    push('+ 9903.01.24 Fentanyl IEEPA', cnhkEoTotal, avgRate(lineBreakdown, 'cnhkEoRate'),
+   455→      `${e?.citation ?? 'IEEPA fentanyl tariff'} — effective ${e?.effectiveDate ?? 'N/A'} · rate-snapshot verified ${e?.lastVerifiedAt?.slice(0, 10) ?? 'N/A'}`);
+   456→  }
+   457→  if (anyCountryTotal > 0) {
+   458→    const e = snapRec('us-9903.01.25');
+   459→    push('+ 9903.01.25 any-country baseline reciprocal', anyCountryTotal, avgRate(lineBreakdown, 'anyCountryRate'),
+   460→      `${e?.citation ?? 'EO 14257 baseline reciprocal'} — effective ${e?.effectiveDate ?? 'N/A'} · rate-snapshot verified ${e?.lastVerifiedAt?.slice(0, 10) ?? 'N/A'}`);
+   461→  }
+   462→  if (vatTotal > 0) push(region === 'AU' ? '+ GST (Goods & Services Tax)' : '+ VAT', vatTotal, dest.vatRate, region !== 'US' ? `On (CIF + duty) — ${dest.countryName} ${region === 'AU' ? 'GST' : 'standard rate'}` : undefined);
+   463→  if (mpfTotal > 0) push('+ MPF (Merchandise Processing Fee)', mpfTotal, rule.mpfRate, 'US 0.3464%, floored/capped');
+   464→  if (hmfTotal > 0) push('+ HMF (Harbor Maintenance Fee)', hmfTotal, rule.hmfRate, 'US ocean 0.125% (not assessed for rail/air)');
+   465→  if (region === 'US' && !hmfApplies) waterfall.push({ label: '– HMF not assessed', amount: 0, cumulative: cum, note: `${mode} mode — HMF is ocean-only (19 U.S.C. §4462)` });
+   466→  if (region === 'AU' && ipcTotal > 0) push('+ Import Processing Charge (IPC)', ipcTotal, undefined, `ABF flat A$${ipcTotal} (≥ A$10,000 formal entry — exclusive threshold per FY2026 schedule)`);
+   467→  // EU e-commerce parcel regime waterfall steps (only when ≤ €150 de-minimis regime fires)
+   468→  if (region === 'EU' && euParcelDutyTotal > 0) push('+ EU parcel flat customs duty (€3 per unique HS6)', euParcelDutyTotal, undefined, `Reg (EU) 2017/2455 — €150 de minimis REMOVED 1 Jul 2021; flat €3 per unique HS6 line item for parcels ≤ €150`);
+   469→  if (region === 'EU' && euParcelHandlingTotal > 0) push('+ EU parcel handling fee (€2 per declaration line)', euParcelHandlingTotal, undefined, `Reg (EU) 2017/2455 — flat €2 per customs declaration line; VAT applied on top of (product value + duty + handling)`);
+   470→  // Carbon penalty avoidance savings — distinct, un-blended metric, NOT in the running cumulative
+   471→  // (it's a SAVINGS, not a cost; would subtract from the landed cost, but per the directive it's
+   472→  // surfaced separately as a payload attribute + DB row rather than blended into totalLandedCost).
+   473→  if (carbonSavings > 0) {
+   474→    waterfall.push({
+   475→      label: `🌍 Carbon penalty avoidance savings (${region} ETS)`,
+   476→      amount: -carbonSavings,
+   477→      cumulative: cum,
+   478→      note: `${region === 'UK' ? 'UK ETS' : 'EU ETS'} carbon-price valuation of (air - ${inputs.modeOfTransport ?? 'Ocean'}) emissions delta on freight. Distinct, un-blended metric — NOT added to total landed cost; surfaced as a separate payload attribute.`,
+   479→    });
+   480→  }
+   481→  if (otherLeviesTotal > 0) push('+ Other levies', otherLeviesTotal);
+   482→  if (customsBrokerFee) push('+ Customs broker fee', x(customsBrokerFee));
+   483→  if (documentationFee) push('+ Documentation fee', x(documentationFee));
+   484→  if (dutyAdvanceFee) push('+ Duty advance fee', x(dutyAdvanceFee));
+   485→  if (harborOrPortFee) push('+ Harbor / port fee', x(harborOrPortFee));
+   486→  if (inlandDelivery) push('+ Inland destination delivery', x(inlandDelivery));
+   487→  waterfall.push({ label: '= Total landed cost', amount: totalLandedCost, cumulative: totalLandedCost, note: `Effective rate ${(effectiveRate * 100).toFixed(2)}%` });
+   488→
+   489→  const calculation: RegionCalculation = {
+   490→    region, label: dest.label, flag: dest.flag, currency: dest.currency,
+   491→    subtotal, dutyTotal, section301Total, ieepaTotal,
+   492→    chinaReciprocalTotal, cnhkEoTotal, anyCountryTotal,
+   493→    vatTotal, mpfTotal, hmfTotal, hmfApplies, modeOfTransport: inputs.modeOfTransport ?? 'Ocean',
+   494→    otherLevies: otherLeviesTotal, freight: freightDest, insurance: insuranceDest,
+   495→    otherImportCharges: otherImportChargesDest,
+   496→    totalLandedCost, effectiveRate, fta: ftaAdvisory,
+   497→    euParcelDutyTotal: region === 'EU' ? euParcelDutyTotal : undefined,
+   498→    euParcelHandlingTotal: region === 'EU' ? euParcelHandlingTotal : undefined,
+   499→    carbonSavings: carbonSavings > 0 ? carbonSavings : undefined,
+   500→    lineBreakdown, waterfall, notes: rule.notes,
+   501→  };
+   502→
+   503→  // persist (single region; the 2025 Chapter-99 provisions folded into otherLevies for the DB row)
+   504→  await db.landedCostCalculation.create({
+   505→    data: {
+   506→      poId, region,
+   507→      subtotal, dutyTotal, vatTotal, mpfTotal, hmfTotal,
+   508→      otherLevies: otherLeviesTotal + chinaReciprocalTotal + cnhkEoTotal + anyCountryTotal,
+   509→      freight: freightDest, insurance: insuranceDest,
+   510→      totalLandedCost, breakdownJson: JSON.stringify(lineBreakdown),
+   511→      // destination / FX / effective-rate snapshot fields (Task 16-b)
+   512→      destinationCountry: dest.countryCode,
+   513→      destinationCurrency: dest.currency,
+   514→      originCurrency: poCurrency,
+   515→      effectiveRate,
+   516→      fxSnapshotJson: fx ? JSON.stringify({
+   517→        from: poCurrency,
+   518→        to: dest.currency,
+   519→        rate: fx.rate,
+   520→        source: fx.source,
+   521→        date: fx.date,
+   522→        fetchedAt: fx.fetchedAt,
+   523→      }) : null,
+   524→      // FTA snapshot — populated by Task 18 wiring
+   525→      ftaName: ftaAdvisory.applies ? ftaAdvisory.agreementShortName : null,
+   526→      ftaPreferentialRate: ftaAdvisory.applies ? ftaAdvisory.preferentialRate : null,
+   527→      mfnRate: weightedMfn,
+   528→      poNumber: po.poNumber,
+   529→      destinationLabel: dest.label,
+   530→      originCountry: po.originCountry ?? null,
+   531→      carbonSavings: carbonSavings > 0 ? carbonSavings : null,
+   532→      euParcelDutyTotal: region === 'EU' && euParcelDutyTotal > 0 ? euParcelDutyTotal : null,
+   533→      euParcelHandlingTotal: region === 'EU' && euParcelHandlingTotal > 0 ? euParcelHandlingTotal : null,
+   534→    },
+   535→  });
+   536→
+   537→  return {
+   538→    poId,
+   539→    poNumber: po.poNumber,
+   540→    originCurrency: poCurrency,
+   541→    destination: {
+   542→      countryCode: dest.countryCode, countryName: dest.countryName,
+   543→      region: dest.region, currency: dest.currency, vatRate: dest.vatRate,
+   544→      flag: dest.flag, label: dest.label,
+   545→    },
+   546→    fx: fx.source === 'identity' && poCurrency === dest.currency ? null : {
+   547→      fromCurrency: poCurrency,
+   548→      toCurrency: dest.currency,
+   549→      rate: fx.rate, source: fx.source, date: fx.date, fetchedAt: fx.fetchedAt,
+   550→    },
+   551→    calculation,
+   552→    calculatedAt: new Date().toISOString(),
+   553→  };
+   554→}
+   555→
+   556→function num(v: unknown): number {
+   557→  const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
+   558→  return Number.isFinite(n) && n >= 0 ? n : 0;
+   559→}
+   560→function round(n: number): number {
+   561→  return Math.round(n * 100) / 100;
+   562→}
+   563→/** Currency symbol for the destination currency (used in waterfall notes). */
+   564→function sym(currency: string): string {
+   565→  const map: Record<string, string> = {
+   566→    USD: '$', GBP: '£', EUR: '€', AUD: 'A$', CAD: 'C$', JPY: '¥', CNY: '¥',
+   567→    INR: '₹', PKR: '₨', BRL: 'R$', MXN: 'MX$', NZD: 'NZ$', SEK: 'kr',
+   568→    PLN: 'zł', DKK: 'kr', NOK: 'kr', CZK: 'Kč', HUF: 'Ft', RON: 'lei',
+   569→    BGN: 'лв', HRK: 'kn', TRY: '₺', AED: 'AED', SAR: 'SAR',
+   570→  };
+   571→  return map[currency.toUpperCase()] ?? currency + ' ';
+   572→}
+   573→function avgDutyRate(lines: LineBreakdown[]): number | undefined {
+   574→  const fob = lines.reduce((s, l) => s + l.fobValue, 0);
+   575→  if (fob <= 0) return undefined;
+   576→  return lines.reduce((s, l) => s + l.dutyRate * l.fobValue, 0) / fob;
+   577→}
+   578→function avgRate(lines: LineBreakdown[], key: 'section301Rate' | 'ieepaRate' | 'chinaReciprocalRate' | 'cnhkEoRate' | 'anyCountryRate'): number | undefined {
+   579→  const fob = lines.reduce((s, l) => s + l.fobValue, 0);
+   580→  if (fob <= 0) return undefined;
+   581→  return lines.reduce((s, l) => s + l[key] * l.fobValue, 0) / fob;
+   582→}
+   583→
